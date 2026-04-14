@@ -1,0 +1,329 @@
+blueprint:
+  name: Aqara W100 Sync (ZHA)
+  description: |-
+    Flexible sync for Aqara W100 (ZHA).
+
+    * **Bidirectional Climate Sync:** Mirror HVAC mode, target temperature, and fan speed between the W100 and any primary thermostat.
+    * **Smart Safeguards:** W100 mode and temperature are auto-corrected when out of the primary thermostat's supported range.
+    * **Sensor Reporting:** Push live temperature and humidity to the W100 screen from your thermostat or other sensors.
+
+    Climate sync and sensor reporting work independently — enable only what you need.
+
+    ⚠️ **Requires custom quirk:** https://github.com/
+    ⚠️ Depending on your setup, enable *External sensor*, *Thermostat control mode*, and/or *Show fan* in W100 device settings.
+  domain: automation
+  author: nokside
+  input:
+    w100_climate:
+      name: Aqara W100
+      description: >
+        Required for thermostat sync and/or external sensor sync.
+      selector:
+        entity:
+          filter:
+            - integration: zha
+              domain: climate
+    primary_climate:
+      name: Primary thermostat / AC
+      default: []
+      selector:
+        entity:
+          domain: climate
+    sync_primary_th:
+      name: Sync primary thermostat temperature and humidity to W100
+      default: false
+      selector:
+        boolean:
+    temperature_sensor:
+      name: Temperature sensor
+      description: >
+        When selected, takes priority over thermostat temperature sync.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+    humidity_sensor:
+      name: Humidity sensor
+      description: >
+        When selected, takes priority over thermostat humidity sync.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: humidity
+
+mode: queued
+max_exceeded: silent
+
+trigger_variables:
+  _primary: !input primary_climate
+  _temp_sensor: !input temperature_sensor
+  _hum_sensor: !input humidity_sensor
+  _sync_primary_th: !input sync_primary_th
+
+triggers:
+  - trigger: state
+    entity_id: !input w100_climate
+    id: w100
+    enabled: "{{ _primary != [] }}"
+    not_from:
+      - unavailable
+      - unknown
+    not_to:
+      - unavailable
+      - unknown
+
+  - trigger: state
+    entity_id: !input w100_climate
+    id: w100
+    enabled: "{{ _primary != [] }}"
+    attribute: temperature
+
+  - trigger: state
+    entity_id: !input w100_climate
+    id: w100
+    enabled: "{{ _primary != [] }}"
+    attribute: fan_mode
+
+  - trigger: state
+    entity_id: !input primary_climate
+    id: primary
+    enabled: "{{ _primary != [] }}"
+    not_from:
+      - unavailable
+      - unknown
+    not_to:
+      - unavailable
+      - unknown
+
+  - trigger: state
+    entity_id: !input primary_climate
+    id: primary
+    enabled: "{{ _primary != [] }}"
+    attribute: temperature
+
+  - trigger: state
+    entity_id: !input primary_climate
+    id: primary
+    enabled: "{{ _primary != [] }}"
+    attribute: fan_mode
+
+  - trigger: state
+    entity_id: !input primary_climate
+    from: unavailable
+    id: resync
+    enabled: "{{ _primary != [] }}"
+
+  - trigger: homeassistant
+    event: start
+    id: resync
+
+  - trigger: event
+    event_type: automation_reloaded
+    id: resync
+
+  - trigger: state
+    entity_id: !input primary_climate
+    attribute: current_temperature
+    id: ext_temp
+    enabled: "{{ _sync_primary_th is true and _temp_sensor == [] and _primary != [] }}"
+
+  - trigger: state
+    entity_id: !input primary_climate
+    attribute: current_humidity
+    id: ext_hum
+    enabled: "{{ _sync_primary_th is true and _hum_sensor == [] and _primary != [] }}"
+
+  - trigger: state
+    entity_id: !input temperature_sensor
+    id: ext_temp
+    enabled: "{{ _temp_sensor != [] }}"
+    not_to:
+      - unavailable
+      - unknown
+
+  - trigger: state
+    entity_id: !input humidity_sensor
+    id: ext_hum
+    enabled: "{{ _hum_sensor != [] }}"
+    not_to:
+      - unavailable
+      - unknown
+
+variables:
+  w100: !input w100_climate
+  primary: !input primary_climate
+  auto_modes: ['heat_cool', 'auto']
+  sync_primary_th: !input sync_primary_th
+  temp_sensor: !input temperature_sensor
+  hum_sensor: !input humidity_sensor
+
+conditions:
+  - condition: template
+    value_template: >
+      {{ has_value(w100)
+         and (primary != []
+              or temp_sensor != []
+              or hum_sensor != []) }}
+
+actions:
+  - variables:
+      trigger_id: "{{ trigger.id | default('resync') }}"
+      source: >
+        {% if trigger_id in ['w100', 'primary', 'resync']
+           and primary != []
+           and has_value(primary) %}
+          {{ w100 if trigger_id == 'w100' else primary }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      target: >
+        {% if source is not none %}
+          {{ primary if source == w100 else w100 }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+
+      # --- Mode ---
+      source_mode: "{{ states(source) if source is not none else none }}"
+      target_mode: "{{ states(target) if source is not none else none }}"
+      mode_data: >
+        {% set target_modes = state_attr(target, 'hvac_modes') | default([], true) if source is not none else [] %}
+        {% if source_mode in target_modes %}
+          {{ source_mode }}
+        {% elif source_mode in auto_modes %}
+          {% set mapped = auto_modes | select('in', target_modes)
+             | first | default(none) %}
+          {{ mapped or (target_mode if source == w100 else none) }}
+        {% elif source == w100 %}
+          {{ target_mode }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      mode_target: "{{ source if source == w100 and mode_data == target_mode else target }}"
+      mode_sync: >
+        {{ mode_data is not none
+           and mode_data != (target_mode if mode_target == target else source_mode) }}
+
+      # --- Temp ---
+      skip_temp: "{{ source is none or target_mode == 'off' or mode_sync and mode_target == source }}"
+      source_temp: "{{ none if skip_temp else state_attr(source, 'temperature') }}"
+      target_temp: "{{ none if skip_temp else state_attr(target, 'temperature') }}"
+      temp_data: >
+        {% if source_temp is number
+           and source_temp != target_temp %}
+          {% set t_min = 4.5 if target == w100 else state_attr(target, 'min_temp') %}
+          {% set t_max = 37.0 if target == w100 else state_attr(target, 'max_temp') %}
+          {% if t_min is number and t_max is number %}
+            {{ (t_min if source_temp < t_min else t_max if source_temp > t_max else source_temp) | round(1) }}
+          {% else %}
+            {{ source_temp | round(1) }}
+          {% endif %}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      temp_target: "{{ target if source != w100 or temp_data != target_temp else source }}"
+      temp_sync: >
+        {{ temp_data is number
+           and temp_data != (target_temp if temp_target == target else source_temp) }}
+
+      # --- Fan ---
+      source_fan: "{{ state_attr(source, 'fan_mode') if source is not none else none }}"
+      target_fan: "{{ state_attr(target, 'fan_mode') if source_fan is not none else none }}"
+      fan_data: >
+        {% set t_fans = state_attr(target, 'fan_modes') | default([], true)
+           if source_fan is not none and source_fan != target_fan else [] %}
+        {% if source_fan in t_fans %}
+          {{ source_fan }}
+        {% elif t_fans and source == w100 %}
+          {{ target_fan }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      fan_target: "{{ source if source == w100 and fan_data == target_fan else target }}"
+      fan_sync: "{{ fan_data is not none }}"
+
+      # --- Ext Temp ---
+      ext_temp_data: >
+        {% if (sync_primary_th is true or temp_sensor != []) and trigger_id in ['ext_temp', 'resync'] %}
+          {% set temp = states(temp_sensor) | float(none)
+             if temp_sensor != []
+             else state_attr(primary, 'current_temperature') %}
+          {{ temp | round(1) if temp is number else none }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      ext_temp_entity: >
+        {% if ext_temp_data is number %}
+          {% set device = device_id(w100) %}
+          {{ device_entities(device)
+             | select('search', 'external_temperature')
+             | first | default(none) }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      ext_temp_sync: "{{ ext_temp_data is number and states(ext_temp_entity) | float(none) != ext_temp_data }}"
+
+      # --- Ext Hum ---
+      ext_hum_data: >
+        {% if (sync_primary_th is true or hum_sensor != []) and trigger_id in ['ext_hum', 'resync'] %}
+          {% set hum = states(hum_sensor) | float(none)
+             if hum_sensor != []
+             else state_attr(primary, 'current_humidity') %}
+          {{ hum | round(0) | int if hum is number else none }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      ext_hum_entity: >
+        {% if ext_hum_data is number %}
+          {% set device = device_id(w100) %}
+          {{ device_entities(device)
+             | select('search', 'external_humidity')
+             | first | default(none) }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      ext_hum_sync: "{{ ext_hum_data is number and states(ext_hum_entity) | float(none) != ext_hum_data }}"
+
+  - if: "{{ mode_sync }}"
+    then:
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: "{{ mode_target }}"
+        data:
+          hvac_mode: "{{ mode_data }}"
+
+  - if: "{{ temp_sync }}"
+    then:
+      - action: climate.set_temperature
+        target:
+          entity_id: "{{ temp_target }}"
+        data:
+          temperature: "{{ temp_data }}"
+
+  - if: "{{ fan_sync }}"
+    then:
+      - action: climate.set_fan_mode
+        target:
+          entity_id: "{{ fan_target }}"
+        data:
+          fan_mode: "{{ fan_data }}"
+
+  - if: "{{ ext_temp_sync }}"
+    then:
+      - action: number.set_value
+        target:
+          entity_id: "{{ ext_temp_entity }}"
+        data:
+          value: "{{ ext_temp_data }}"
+
+  - if: "{{ ext_hum_sync }}"
+    then:
+      - action: number.set_value
+        target:
+          entity_id: "{{ ext_hum_entity }}"
+        data:
+          value: "{{ ext_hum_data }}"
