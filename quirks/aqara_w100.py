@@ -1,4 +1,8 @@
-"""Quirk for Aqara Climate Sensor W100 (lumi.sensor_ht.agl001)."""
+"""Quirk for Aqara Climate Sensor W100 (lumi.sensor_ht.agl001).
+
+Link to recommended Blueprint:
+https://github.com/nokside/ha-toolbox/blob/main/blueprints/automation/aqara_w100.yaml
+"""
 
 import os
 import struct
