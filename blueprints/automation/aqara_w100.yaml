@@ -12,6 +12,7 @@ blueprint:
     ⚠️ **Requires [custom quirk](https://github.com/nokside/ha-toolbox/blob/main/quirks/aqara_w100.py)**
     ⚠️ Depending on your setup, enable *External sensor*, *Thermostat control mode*, and/or *Show fan* in W100 device settings.
   domain: automation
+  source_url: https://raw.githubusercontent.com/nokside/ha-toolbox/refs/heads/main/blueprints/automation/aqara_w100.yaml
   author: nokside
   input:
     w100_climate:
