@@ -1,10 +1,5 @@
-"""Quirk for Aqara Climate Sensor W100 (lumi.sensor_ht.agl001).
+"""Quirk for Aqara Climate Sensor W100 (lumi.sensor_ht.agl001)."""
 
-Link to recommended Blueprint:
-https://github.com/nokside/ha-toolbox/blob/main/blueprints/automation/aqara_w100.yaml
-"""
-
-import os
 import struct
 import time
 from typing import Any, Final
@@ -18,7 +13,7 @@ from zigpy.quirks.v2.homeassistant import (
     UnitOfTemperature,
     UnitOfTime,
 )
-from zigpy.quirks.v2.homeassistant.number import NumberDeviceClass
+from zigpy.quirks.v2.homeassistant.number import NumberDeviceClass, NumberMode
 from zigpy.typing import UNDEFINED, UndefinedType
 from zigpy.zcl import foundation
 from zigpy.zcl.clusters.general import MultistateInput
@@ -55,13 +50,6 @@ THERMOSTAT_ON_BIT: Final = 0x01
 EXTERNAL_SENSOR_BIT: Final = 0x02
 
 
-def _build_lumi_header(payload_len: int, command_id: int) -> bytes:
-    """Build a 9-byte Lumi frame header with auto-calculated integrity."""
-    header = [0xAA, 0x71, payload_len + 3, 0x44, os.urandom(1)[0]]
-    integrity = (-sum(header)) & 0xFF
-    return bytes([*header, integrity, command_id, 0x41, payload_len])
-
-
 class SamplingFrequency(t.enum8):
     Low = 1
     Standard = 2
@@ -73,7 +61,7 @@ class ReportMode(t.enum8):
     Off = 0
     Threshold = 1
     Period = 2
-    Threshold_period = 3
+    Threshold_and_period = 3
 
 
 class AlertState(t.enum8):
@@ -209,9 +197,11 @@ class AqaraW100ManuCluster(XiaomiAqaraE1Cluster):
         super()._update_attribute(attrid, value)
 
         if attrid == self.AttributeDefs.mode_flags.id:
+            self.debug("w100test mode_flags changed: 0x%04X", int(value))  # test
             self.endpoint.w100_thermostat_control_mode.apply_state(value)
             self.endpoint.w100_external_sensors.apply_state(value)
         elif attrid == self.AttributeDefs.command_raw.id:
+            self.debug("w100test command_raw received: %r", bytes(value))  # test
             self._dispatch_raw_command(bytes(value))
 
     def _dispatch_raw_command(self, payload: bytes) -> None:
@@ -234,11 +224,6 @@ class W100PmtsdCluster(LocalDataCluster):
         last_active_mode = ZCLAttributeDef(
             id=0x5000,
             type=Thermostat.SystemMode,
-            manufacturer_code=AQARA_MFG_CODE,
-        )
-        pmtsd_d = ZCLAttributeDef(
-            id=0x5001,
-            type=t.uint8_t,
             manufacturer_code=AQARA_MFG_CODE,
         )
         thermostat_line_show_fan = ZCLAttributeDef(
@@ -274,12 +259,20 @@ class W100PmtsdCluster(LocalDataCluster):
     HEATING_SETPOINT_ATTR: Final = Thermostat.AttributeDefs.occupied_heating_setpoint.id
     COOLING_SETPOINT_ATTR: Final = Thermostat.AttributeDefs.occupied_cooling_setpoint.id
     FAN_MODE_ATTR: Final = Fan.AttributeDefs.fan_mode.id
+    LAST_ACTIVE_MODE_ATTR: Final = AttributeDefs.last_active_mode.id
+    SHOW_FAN_ATTR: Final = AttributeDefs.thermostat_line_show_fan.id
 
     _DEFAULT_VALUES = {
-        AttributeDefs.last_active_mode.id: Thermostat.SystemMode.Heat,
-        AttributeDefs.pmtsd_d.id: 0,
-        AttributeDefs.thermostat_line_show_fan.id: False,
+        LAST_ACTIVE_MODE_ATTR: Thermostat.SystemMode.Heat,
+        SHOW_FAN_ATTR: False,
     }
+
+    @staticmethod
+    def _build_lumi_header(payload_len: int) -> bytes:
+        """Build 9-byte Lumi header for PMTSD frame."""
+        prefix = [0xAA, 0x71, payload_len + 3, 0x44, 0x00]
+        checksum = (-sum(prefix)) & 0xFF
+        return bytes([*prefix, checksum, 0x05, 0x41, payload_len])
 
     def handle_raw_thermostat(self, payload: bytes) -> None:
         if payload.endswith(self.PMTSD_REQUEST_MARKER):
@@ -288,9 +281,11 @@ class W100PmtsdCluster(LocalDataCluster):
             self._pmtsd_from_w100(payload)
 
     def _pmtsd_from_w100(self, payload: bytes) -> None:
-        marker = self.PMTSD_REQUEST_MARKER
-        idx = payload.find(marker)
-        length_idx = idx + len(marker)
+        idx = payload.find(self.PMTSD_REQUEST_MARKER)
+        if idx == -1:
+            return
+
+        length_idx = idx + len(self.PMTSD_REQUEST_MARKER)
         data_len = payload[length_idx]
         start = length_idx + 1
         end = start + data_len
@@ -313,16 +308,10 @@ class W100PmtsdCluster(LocalDataCluster):
             key = part[:1].lower()
             value = part[1:]
 
-            if key == "p":
-                report["p"] = int(value)
-            elif key == "m":
-                report["m"] = int(value)
+            if key in ("p", "m", "s", "d"):
+                report[key] = int(value)
             elif key == "t":
-                report["t"] = float(value)
-            elif key == "s":
-                report["s"] = int(value)
-            elif key == "d":
-                report["d"] = int(value)
+                report[key] = float(value)
             else:
                 self.debug("Unknown PMTSD key: %r in %r", key, raw_str)
 
@@ -336,15 +325,15 @@ class W100PmtsdCluster(LocalDataCluster):
         if "m" in payload:
             mode = self.PMTSD_M_TO_SYSTEM_MODE[int(payload["m"])]
             thermostat._update_attribute(self.SYSTEM_MODE_ATTR, mode)
-            self._update_attribute(self.AttributeDefs.last_active_mode.id, mode)
+            self._update_attribute(self.LAST_ACTIVE_MODE_ATTR, mode)
 
         if "t" in payload:
-            setpoint = int(float(payload["t"]) * 100)
+            setpoint = round(float(payload["t"]) * 100)
             current_mode = thermostat.get(self.SYSTEM_MODE_ATTR)
             target_mode = (
                 current_mode
                 if current_mode != Thermostat.SystemMode.Off
-                else self.get(self.AttributeDefs.last_active_mode.id)
+                else self.get(self.LAST_ACTIVE_MODE_ATTR)
             )
             attr = (
                 self.COOLING_SETPOINT_ATTR
@@ -356,26 +345,23 @@ class W100PmtsdCluster(LocalDataCluster):
         if "s" in payload:
             fan_mode = self.PMTSD_S_TO_FAN_MODE[int(payload["s"])]
             self.endpoint.fan._update_attribute(self.FAN_MODE_ATTR, fan_mode)
-            if not self.get(self.AttributeDefs.thermostat_line_show_fan.id):
+            if not self.get(self.SHOW_FAN_ATTR):
                 needs_sync = True
 
         if "p" in payload:
             if payload["p"] == 1:
                 current_mode = thermostat.get(self.SYSTEM_MODE_ATTR)
                 if current_mode != Thermostat.SystemMode.Off:
-                    self._update_attribute(
-                        self.AttributeDefs.last_active_mode.id, current_mode
-                    )
+                    self._update_attribute(self.LAST_ACTIVE_MODE_ATTR, current_mode)
                 thermostat._update_attribute(
                     self.SYSTEM_MODE_ATTR, Thermostat.SystemMode.Off
                 )
-            elif payload["p"] == 0:
-                if was_off:
-                    thermostat._update_attribute(
-                        self.SYSTEM_MODE_ATTR,
-                        self.get(self.AttributeDefs.last_active_mode.id),
-                    )
-                    needs_sync = True
+            elif payload["p"] == 0 and was_off:
+                thermostat._update_attribute(
+                    self.SYSTEM_MODE_ATTR,
+                    self.get(self.LAST_ACTIVE_MODE_ATTR),
+                )
+                needs_sync = True
 
         if needs_sync:
             self.create_catching_task(self.sync_state_to_w100())
@@ -391,33 +377,38 @@ class W100PmtsdCluster(LocalDataCluster):
             + ascii_payload
             + b"\x00"
         )
-        return _build_lumi_header(len(payload), 0x05) + payload
+        return self._build_lumi_header(len(payload)) + payload
 
     def _build_pmtsd_to_w100(self) -> str:
         thermostat = self.endpoint.thermostat
         system_mode = thermostat.get(self.SYSTEM_MODE_ATTR)
-        active_mode = (
-            self.get(self.AttributeDefs.last_active_mode.id)
-            if system_mode == Thermostat.SystemMode.Off
-            else system_mode
-        )
-
-        p = 1 if system_mode == Thermostat.SystemMode.Off else 0
-        m = self.SYSTEM_MODE_TO_PMTSD_M[active_mode]
-        setpoint = thermostat.get(
-            self.COOLING_SETPOINT_ATTR
-            if active_mode == Thermostat.SystemMode.Cool
-            else self.HEATING_SETPOINT_ATTR
-        )
-
-        parts = [f"P{p}", f"M{m}", f"T{setpoint / 100:g}"]
-        if self.get(self.AttributeDefs.thermostat_line_show_fan.id):
-            s = self.FAN_MODE_TO_PMTSD_S[self.endpoint.fan.get(self.FAN_MODE_ATTR)]
-            parts.append(f"S{s}")
+        is_off = system_mode == Thermostat.SystemMode.Off
+    
+        if is_off:
+            active_mode = self.get(self.LAST_ACTIVE_MODE_ATTR)
+        else:
+            active_mode = system_mode
+    
+        if active_mode == Thermostat.SystemMode.Cool:
+            setpoint = thermostat.get(self.COOLING_SETPOINT_ATTR)
+        else:
+            setpoint = thermostat.get(self.HEATING_SETPOINT_ATTR)
+    
+        power = 1 if is_off else 0
+        mode = self.SYSTEM_MODE_TO_PMTSD_M[active_mode]
+    
+        parts = [f"P{power}", f"M{mode}", f"T{setpoint / 100}"]
+    
+        if self.get(self.SHOW_FAN_ATTR):
+            fan_mode = self.endpoint.fan.get(self.FAN_MODE_ATTR)
+            speed = self.FAN_MODE_TO_PMTSD_S[fan_mode]
+            parts.append(f"S{speed}")
+    
         return "_".join(parts)
 
     async def _write_frame_to_w100(self, ascii_str: str) -> None:
         frame = self._build_frame_to_w100(ascii_str)
+        self.debug("w100test PMTSD frame: %s -> %r", ascii_str, frame)
         await self.endpoint.aqara_w100_manu.write_attributes(
             {
                 self.endpoint.aqara_w100_manu.AttributeDefs.command_raw.id: t.LVBytes(
@@ -438,7 +429,7 @@ class W100PmtsdCluster(LocalDataCluster):
 
         mode = self.endpoint.thermostat.get(self.SYSTEM_MODE_ATTR)
         if mode != Thermostat.SystemMode.Off:
-            self._update_attribute(self.AttributeDefs.last_active_mode.id, mode)
+            self._update_attribute(self.LAST_ACTIVE_MODE_ATTR, mode)
 
         await self._write_frame_to_w100(self._build_pmtsd_to_w100())
 
@@ -453,10 +444,8 @@ class W100PmtsdCluster(LocalDataCluster):
             for attr, value in attributes.items()
         }
 
-        for attrid, value in resolved.items():
-            self._update_attribute(attrid, value)
-
-        if self.AttributeDefs.thermostat_line_show_fan.id in resolved:
+        if self.SHOW_FAN_ATTR in resolved:
+            self._update_attribute(self.SHOW_FAN_ATTR, resolved[self.SHOW_FAN_ATTR])
             await self.sync_state_to_w100()
 
         return [[foundation.WriteAttributesStatusRecord(
@@ -465,7 +454,7 @@ class W100PmtsdCluster(LocalDataCluster):
 
 
 class W100ThermostatControlModeCluster(LocalDataCluster):
-    """Thermostat control mode activation and deactivation."""
+    """Thermostat control mode activation/deactivation via Aqara Lumi protocol."""
 
     cluster_id = 0xFCF1
     ep_attribute = "w100_thermostat_control_mode"
@@ -477,32 +466,36 @@ class W100ThermostatControlModeCluster(LocalDataCluster):
             manufacturer_code=AQARA_MFG_CODE,
         )
 
-    MODE_ON_TAIL: Final = bytes.fromhex(
+    # Lumi 9-byte frame headers (precomputed for fixed-length payloads)
+    LUMI_HEADER_MODE_ON: Final = bytes.fromhex("aa713244006f02412f")    # cmd=0x02, payload=47b
+    LUMI_HEADER_MODE_OFF: Final = bytes.fromhex("aa711c440085044119")   # cmd=0x04, payload=25b
+
+    # Common prefix for mode toggle commands
+    MODE_TOGGLE_PREFIX: Final = bytes.fromhex("6891000018")
+
+    # Embedded PMTSD payload appended in mode_on (contains Chinese label "温度功能")
+    MODE_ON_PAYLOAD_TAIL: Final = bytes.fromhex(
         "08000844150a0109e7a9bae8b083e58a9f000000000001012a40"
     )
-    MODE_CONTROL: Final = b"\x18"
 
-    def _build_thermostat_control_mode_command(self, enabled: bool) -> bytes:
+    def _build_command(self, enabled: bool) -> bytes:
         device_mac = self.endpoint.device.ieee.serialize()[::-1]
         if enabled:
-            payload = (
-                b"\x68\x91"
-                + os.urandom(2)
-                + self.MODE_CONTROL
+            hub_mac = device_mac[:6]
+            return (
+                self.LUMI_HEADER_MODE_ON
+                + self.MODE_TOGGLE_PREFIX
                 + device_mac
                 + b"\x00\x00"
-                + device_mac[:6]
-                + self.MODE_ON_TAIL
+                + hub_mac
+                + self.MODE_ON_PAYLOAD_TAIL
             )
-            return _build_lumi_header(len(payload), 0x02) + payload
-        else:
-            payload = (
-                b"\x68\x91"
-                + os.urandom(2)
-                + self.MODE_CONTROL
-                + device_mac
-            ).ljust(25, b"\x00")
-            return _build_lumi_header(len(payload), 0x04) + payload
+        return (
+            self.LUMI_HEADER_MODE_OFF
+            + self.MODE_TOGGLE_PREFIX
+            + device_mac
+            + bytes(12)
+        )
 
     def apply_state(self, raw_flags: Any) -> None:
         state = bool(int(raw_flags) & THERMOSTAT_ON_BIT)
@@ -519,8 +512,9 @@ class W100ThermostatControlModeCluster(LocalDataCluster):
             for attr, value in attributes.items()
         }
 
-        desired = bool(resolved[self.AttributeDefs.thermostat_control_mode.id])
-        frame = self._build_thermostat_control_mode_command(desired)
+        desired = bool(resolved.get(self.AttributeDefs.thermostat_control_mode.id))
+        frame = self._build_command(desired)
+        self.debug("w100test thermostat control mode: enabled=%s, frame=%r", desired, frame)
 
         return await self.endpoint.aqara_w100_manu.write_attributes(
             {AqaraW100ManuCluster.AttributeDefs.command_raw.id: frame},
@@ -552,13 +546,19 @@ class W100ExternalSensorsCluster(LocalDataCluster):
             manufacturer_code=AQARA_MFG_CODE,
         )
 
-    CHANNEL_HUMIDITY: Final = b"\x15"
-    CHANNEL_TEMPERATURE: Final = b"\x14"
+    HUMIDITY_CHANNEL: Final = b"\x15"
+    TEMPERATURE_CHANNEL: Final = b"\x14"
 
-    EXTERNAL_SOURCE_HUMIDITY_TAIL: Final = bytes.fromhex(
+    # Lumi 9-byte frame headers (precomputed for fixed-length payloads)
+    LUMI_HEADER_SOURCE_EXTERNAL: Final = bytes.fromhex("aa713244006f02412f")  # cmd=0x02, payload=47b
+    LUMI_HEADER_SOURCE_INTERNAL: Final = bytes.fromhex("aa711c440085044119")  # cmd=0x04, payload=25b
+    LUMI_HEADER_MEASUREMENT: Final = bytes.fromhex("aa711344008e054110")      # cmd=0x05, payload=16b
+
+    # Tails for source-external command (contains Chinese labels: 湿度 / 温度)
+    SOURCE_EXTERNAL_HUMIDITY_TAIL: Final = bytes.fromhex(
         "00020055150a0100000106e6b9bfe5baa6000000000001020865"
     )
-    EXTERNAL_SOURCE_TEMPERATURE_TAIL: Final = bytes.fromhex(
+    SOURCE_EXTERNAL_TEMPERATURE_TAIL: Final = bytes.fromhex(
         "00010055150a0100000106e6b8a9e5baa6000000000001020763"
     )
 
@@ -573,52 +573,56 @@ class W100ExternalSensorsCluster(LocalDataCluster):
         AttributeDefs.external_sensor.id: False,
     }
 
-    def _build_sensor_source_frames(
-        self,
-        external: bool,
-    ) -> tuple[t.LVBytes, t.LVBytes]:
+    def _build_source_frames(self, external: bool) -> tuple[t.LVBytes, t.LVBytes]:
         device_mac = self.endpoint.device.ieee.serialize()[::-1]
         timestamp = int(time.time()).to_bytes(4, "big")
 
         if external:
-            humidity_payload = (
-                timestamp
-                + self.CHANNEL_HUMIDITY
-                + device_mac * 2
-                + self.EXTERNAL_SOURCE_HUMIDITY_TAIL
+            fictive_sensor_mac = device_mac
+            humidity = (
+                self.LUMI_HEADER_SOURCE_EXTERNAL
+                + timestamp
+                + self.HUMIDITY_CHANNEL
+                + device_mac
+                + fictive_sensor_mac
+                + self.SOURCE_EXTERNAL_HUMIDITY_TAIL
             )
-            temperature_payload = (
-                timestamp
-                + self.CHANNEL_TEMPERATURE
-                + device_mac * 2
-                + self.EXTERNAL_SOURCE_TEMPERATURE_TAIL
+            temperature = (
+                self.LUMI_HEADER_SOURCE_EXTERNAL
+                + timestamp
+                + self.TEMPERATURE_CHANNEL
+                + device_mac
+                + fictive_sensor_mac
+                + self.SOURCE_EXTERNAL_TEMPERATURE_TAIL
             )
-            command_id = 0x02
         else:
-            humidity_payload = (
-                timestamp + self.CHANNEL_HUMIDITY + device_mac + bytes(12)
+            humidity = (
+                self.LUMI_HEADER_SOURCE_INTERNAL
+                + timestamp
+                + self.HUMIDITY_CHANNEL
+                + device_mac
+                + bytes(12)
             )
-            temperature_payload = (
-                timestamp + self.CHANNEL_TEMPERATURE + device_mac + bytes(12)
+            temperature = (
+                self.LUMI_HEADER_SOURCE_INTERNAL
+                + timestamp
+                + self.TEMPERATURE_CHANNEL
+                + device_mac
+                + bytes(12)
             )
-            command_id = 0x04
 
-        return (
-            t.LVBytes(
-                _build_lumi_header(len(humidity_payload), command_id)
-                + humidity_payload
-            ),
-            t.LVBytes(
-                _build_lumi_header(len(temperature_payload), command_id)
-                + temperature_payload
-            ),
-        )
+        return t.LVBytes(humidity), t.LVBytes(temperature)
 
-    def _build_measurement_command(self, attrid: int, raw_value: int) -> t.LVBytes:
+    def _build_measurement(self, attrid: int, raw_value: int) -> t.LVBytes:
         encoded = struct.pack(">f", float(raw_value))
         device_mac = self.endpoint.device.ieee.serialize()[::-1]
-        payload = device_mac + self._MEASUREMENT_MARKER[attrid] + encoded
-        return t.LVBytes(_build_lumi_header(len(payload), 0x05) + payload)
+        fictive_sensor_mac = device_mac
+        return t.LVBytes(
+            self.LUMI_HEADER_MEASUREMENT
+            + fictive_sensor_mac
+            + self._MEASUREMENT_MARKER[attrid]
+            + encoded
+        )
 
     def apply_state(self, raw_flags: Any) -> None:
         state = bool(int(raw_flags) & EXTERNAL_SENSOR_BIT)
@@ -630,7 +634,11 @@ class W100ExternalSensorsCluster(LocalDataCluster):
                 self.create_catching_task(self._send_cached_attr(attrid))
 
     async def _send_cached_attr(self, attrid: int) -> None:
-        cmd = self._build_measurement_command(attrid, self.get(attrid))
+        cmd = self._build_measurement(attrid, self.get(attrid))
+        self.debug(
+            "w100test external measurement: attr=0x%04X, value=%d, frame=%r",
+            attrid, self.get(attrid), cmd,
+        )
         await self.endpoint.aqara_w100_manu.write_attributes(
             {AqaraW100ManuCluster.AttributeDefs.command_raw.id: cmd},
             manufacturer=AQARA_MFG_CODE,
@@ -649,12 +657,24 @@ class W100ExternalSensorsCluster(LocalDataCluster):
 
         if self.AttributeDefs.external_sensor.id in resolved:
             external = bool(resolved[self.AttributeDefs.external_sensor.id])
-            for frame in self._build_sensor_source_frames(external):
+            for frame in self._build_source_frames(external):
                 await self.endpoint.aqara_w100_manu.write_attributes(
                     {AqaraW100ManuCluster.AttributeDefs.command_raw.id: frame},
                     manufacturer=AQARA_MFG_CODE,
                     **kwargs,
                 )
+
+        resolved_measurements = {
+            attrid: resolved[attrid]
+            for attrid in (
+                self.AttributeDefs.external_temperature.id,
+                self.AttributeDefs.external_humidity.id,
+            )
+            if attrid in resolved
+        }
+
+        for attrid, value in resolved_measurements.items():
+            self._update_attribute(attrid, value)
 
         is_external = bool(
             self.endpoint.aqara_w100_manu.get(
@@ -663,14 +683,9 @@ class W100ExternalSensorsCluster(LocalDataCluster):
             & EXTERNAL_SENSOR_BIT
         )
 
-        for attrid in (
-            self.AttributeDefs.external_temperature.id,
-            self.AttributeDefs.external_humidity.id,
-        ):
-            if attrid in resolved:
-                self._update_attribute(attrid, resolved[attrid])
-                if is_external:
-                    await self._send_cached_attr(attrid)
+        if is_external:
+            for attrid in resolved_measurements:
+                self.create_catching_task(self._send_cached_attr(attrid))
 
         return [[foundation.WriteAttributesStatusRecord(
             foundation.Status.SUCCESS,
@@ -744,10 +759,23 @@ class W100ThermostatCluster(LocalDataCluster, Thermostat):
 
     MIN_SETPOINT: Final = 450
     MAX_SETPOINT: Final = 3700
+
+    class AttributeDefs(BaseAttributeDefs):
+        local_temperature = Thermostat.AttributeDefs.local_temperature
+        occupied_cooling_setpoint = Thermostat.AttributeDefs.occupied_cooling_setpoint
+        occupied_heating_setpoint = Thermostat.AttributeDefs.occupied_heating_setpoint
+        min_heat_setpoint_limit = Thermostat.AttributeDefs.min_heat_setpoint_limit
+        max_heat_setpoint_limit = Thermostat.AttributeDefs.max_heat_setpoint_limit
+        min_cool_setpoint_limit = Thermostat.AttributeDefs.min_cool_setpoint_limit
+        max_cool_setpoint_limit = Thermostat.AttributeDefs.max_cool_setpoint_limit
+        ctrl_sequence_of_oper = Thermostat.AttributeDefs.ctrl_sequence_of_oper
+        system_mode = Thermostat.AttributeDefs.system_mode
+
     _CONSTANT_ATTRIBUTES = {
         Thermostat.AttributeDefs.ctrl_sequence_of_oper.id:
             Thermostat.ControlSequenceOfOperation.Cooling_and_Heating,
     }
+
     _DEFAULT_VALUES = {
         Thermostat.AttributeDefs.system_mode.id: Thermostat.SystemMode.Off,
         Thermostat.AttributeDefs.occupied_heating_setpoint.id: 2000,
@@ -776,7 +804,7 @@ class W100ThermostatCluster(LocalDataCluster, Thermostat):
             or self.get(Thermostat.AttributeDefs.system_mode.id)
             != Thermostat.SystemMode.Auto
         ):
-            await self.endpoint.w100_pmtsd.sync_state_to_w100()
+            self.create_catching_task(self.endpoint.w100_pmtsd.sync_state_to_w100())
 
         return [[foundation.WriteAttributesStatusRecord(foundation.Status.SUCCESS)]]
 
@@ -788,6 +816,7 @@ class W100FanCluster(LocalDataCluster, Fan):
         Fan.AttributeDefs.fan_mode_sequence.id:
             Fan.FanModeSequence.Low_Med_High_Auto,
     }
+
     _DEFAULT_VALUES = {
         Fan.AttributeDefs.fan_mode.id: Fan.FanMode.Auto,
     }
@@ -802,13 +831,12 @@ class W100FanCluster(LocalDataCluster, Fan):
             self.find_attribute(attr).id: value
             for attr, value in attributes.items()
         }
+
         for attrid, value in resolved.items():
             self._update_attribute(attrid, value)
 
-        if self.endpoint.w100_pmtsd.get(
-            W100PmtsdCluster.AttributeDefs.thermostat_line_show_fan.id
-        ):
-            await self.endpoint.w100_pmtsd.sync_state_to_w100()
+        if self.endpoint.w100_pmtsd.get(W100PmtsdCluster.SHOW_FAN_ATTR):
+            self.create_catching_task(self.endpoint.w100_pmtsd.sync_state_to_w100())
 
         return [[foundation.WriteAttributesStatusRecord(foundation.Status.SUCCESS)]]
 
@@ -817,12 +845,15 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
     """TemperatureMeasurement with local_temperature sync to Thermostat."""
 
     def _update_attribute(self, attrid: int, value: Any) -> None:
-        super()._update_attribute(attrid, value)
         if attrid == TemperatureMeasurement.AttributeDefs.measured_value.id:
+            value = int(value / 10) * 10
+            super()._update_attribute(attrid, value)
             self.endpoint.thermostat._update_attribute(
                 Thermostat.AttributeDefs.local_temperature.id,
                 value,
             )
+            return
+        super()._update_attribute(attrid, value)
 
 
 (
@@ -830,7 +861,6 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
     .friendly_name(manufacturer="Aqara", model="Climate Sensor W100")
     .replaces(XiaomiPowerConfigurationPercent, endpoint_id=1)
     .replaces(AqaraW100ManuCluster, endpoint_id=1)
-    .replaces(W100TemperatureMeasurement, endpoint_id=1)
     .replaces(W100ButtonCluster, endpoint_id=1)
     .replaces(W100ButtonCluster, endpoint_id=2)
     .replaces(W100ButtonCluster, endpoint_id=3)
@@ -850,6 +880,7 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
             "MinHeatSetpointLimit",
         ),
     )
+    .replaces(W100TemperatureMeasurement, endpoint_id=1)
     .switch(
         attribute_name="thermostat_line_show_fan",
         cluster_id=W100PmtsdCluster.cluster_id,
@@ -874,7 +905,7 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
         step=0.1,
         multiplier=0.01,
         unit=UnitOfTemperature.CELSIUS,
-        mode="box",
+        mode=NumberMode.BOX,
         translation_key="external_temperature",
         fallback_name="External temperature",
     )
@@ -888,7 +919,7 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
         step=1.0,
         multiplier=0.01,
         unit=PERCENTAGE,
-        mode="box",
+        mode=NumberMode.BOX,
         translation_key="external_humidity",
         fallback_name="External humidity",
     )
