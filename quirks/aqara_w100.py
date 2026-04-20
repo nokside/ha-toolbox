@@ -760,17 +760,6 @@ class W100ThermostatCluster(LocalDataCluster, Thermostat):
     MIN_SETPOINT: Final = 450
     MAX_SETPOINT: Final = 3700
 
-    class AttributeDefs(BaseAttributeDefs):
-        local_temperature = Thermostat.AttributeDefs.local_temperature
-        occupied_cooling_setpoint = Thermostat.AttributeDefs.occupied_cooling_setpoint
-        occupied_heating_setpoint = Thermostat.AttributeDefs.occupied_heating_setpoint
-        min_heat_setpoint_limit = Thermostat.AttributeDefs.min_heat_setpoint_limit
-        max_heat_setpoint_limit = Thermostat.AttributeDefs.max_heat_setpoint_limit
-        min_cool_setpoint_limit = Thermostat.AttributeDefs.min_cool_setpoint_limit
-        max_cool_setpoint_limit = Thermostat.AttributeDefs.max_cool_setpoint_limit
-        ctrl_sequence_of_oper = Thermostat.AttributeDefs.ctrl_sequence_of_oper
-        system_mode = Thermostat.AttributeDefs.system_mode
-
     _CONSTANT_ATTRIBUTES = {
         Thermostat.AttributeDefs.ctrl_sequence_of_oper.id:
             Thermostat.ControlSequenceOfOperation.Cooling_and_Heating,
