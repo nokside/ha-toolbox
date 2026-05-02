@@ -17,6 +17,8 @@ from zigpy.zcl.clusters.general import (
 )
 from zigpy.zcl.foundation import ZCLAttributeDef
 
+from zigpy.zdo.types import NodeDescriptor
+
 from zhaquirks import EventableCluster
 from zhaquirks.const import (
     ARGS,
@@ -35,14 +37,11 @@ from zhaquirks.const import (
     VALUE,
 )
 from zhaquirks.xiaomi import (
-    XIAOMI_NODE_DESC,
     BasicCluster as XiaomiBasicCluster,
     OnOffCluster as XiaomiOnOffCluster,
 )
 
 AQARA_MFG_CODE: Final = 0x115F
-
-CTRL_NEUTRAL_NODE_DESC = XIAOMI_NODE_DESC.replace(mac_capability_flags=132)
 
 class RelayOperationMode1(t.enum8):
     """Relay operation mode values for Aqara wall switches lumi.ctrl_neutral1."""
@@ -56,6 +55,23 @@ class RelayOperationMode2(t.enum8):
     Left_relay = 18
     Right_relay = 34
     Decoupled = 254
+
+
+AQARA_NODE_DESCRIPTOR = NodeDescriptor(
+    logical_type=2,
+    complex_descriptor_available=0,
+    user_descriptor_available=0,
+    reserved=0,
+    aps_flags=0,
+    frequency_band=8,
+    mac_capability_flags=132,
+    manufacturer_code=4151,
+    maximum_buffer_size=127,
+    maximum_incoming_transfer_size=100,
+    server_mask=0,
+    maximum_outgoing_transfer_size=100,
+    descriptor_capability_field=0,
+)
 
 
 class CtrlNeutralBasicCluster(XiaomiBasicCluster):
@@ -127,7 +143,7 @@ CTRL_NEUTRAL_DOUBLE_TRIGGERS = {
     QuirkBuilder("LUMI", "lumi.ctrl_neutral1")
     .applies_to("LUMI", "lumi.switch.b1lacn02")
     .friendly_name(manufacturer="Aqara", model="Wall Switch (No Neutral, Single Rocker)")
-    .node_descriptor(CTRL_NEUTRAL_NODE_DESC)
+    .node_descriptor(AQARA_NODE_DESCRIPTOR)
     .prevent_default_entity_creation(endpoint_id=4, cluster_id=OnOff.cluster_id)
     .device_automation_triggers(CTRL_NEUTRAL_SINGLE_TRIGGERS)
     .replaces(CtrlNeutralBasicCluster, endpoint_id=1)
@@ -159,7 +175,7 @@ CTRL_NEUTRAL_DOUBLE_TRIGGERS = {
     QuirkBuilder("LUMI", "lumi.ctrl_neutral2")
     .applies_to("LUMI", "lumi.switch.b2lacn02")
     .friendly_name(manufacturer="Aqara", model="Wall Switch (No Neutral, Double Rocker)")
-    .node_descriptor(CTRL_NEUTRAL_NODE_DESC)
+    .node_descriptor(AQARA_NODE_DESCRIPTOR)
     .device_automation_triggers(CTRL_NEUTRAL_DOUBLE_TRIGGERS)
     .prevent_default_entity_creation(endpoint_id=4, cluster_id=OnOff.cluster_id)
     .prevent_default_entity_creation(endpoint_id=5, cluster_id=OnOff.cluster_id)
