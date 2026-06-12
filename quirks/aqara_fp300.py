@@ -62,17 +62,29 @@ class ReportMode(t.enum8):
 
 
 class FP300PowerConfiguration(XiaomiPowerConfigurationPercent):
-    """Battery: 2x CR2450, raw mV voltage, Aqara percent (×2 for ZCL spec), ignore ZCL 0x0021."""
+    """FP300 battery: trust only Aqara 0x00F7, ignore direct ZCL battery attrs."""
 
     def battery_reported(self, voltage_mv: int) -> None:
-        super()._update_attribute(self.BATTERY_VOLTAGE_ATTR, voltage_mv)
+        super()._update_attribute(
+            self.BATTERY_VOLTAGE_ATTR,
+            voltage_mv,
+        )
 
     def battery_percent_reported(self, battery_percent: int) -> None:
-        super()._update_attribute(self.BATTERY_PERCENTAGE_REMAINING, battery_percent * 2)
+        super()._update_attribute(
+            self.BATTERY_PERCENTAGE_REMAINING,
+            battery_percent * 2,
+        )
 
     def _update_attribute(self, attrid: int, value: Any) -> None:
-        if attrid == self.BATTERY_PERCENTAGE_REMAINING:
+        # Ignore direct 0x0001/0x0020 and 0x0001/0x0021 from device.
+        # Real values come through battery_reported() / battery_percent_reported().
+        if attrid in (
+            self.BATTERY_VOLTAGE_ATTR,
+            self.BATTERY_PERCENTAGE_REMAINING,
+        ):
             return
+
         super()._update_attribute(attrid, value)
 
 
