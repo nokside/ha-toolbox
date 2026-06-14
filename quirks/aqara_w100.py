@@ -197,11 +197,9 @@ class AqaraW100ManuCluster(XiaomiAqaraE1Cluster):
         super()._update_attribute(attrid, value)
 
         if attrid == self.AttributeDefs.mode_flags.id:
-            self.debug("w100test mode_flags changed: 0x%04X", int(value))  # test
             self.endpoint.w100_thermostat_control_mode.apply_state(value)
             self.endpoint.w100_external_sensors.apply_state(value)
         elif attrid == self.AttributeDefs.command_raw.id:
-            self.debug("w100test command_raw received: %r", bytes(value))  # test
             self._dispatch_raw_command(bytes(value))
 
     def _dispatch_raw_command(self, payload: bytes) -> None:
@@ -212,6 +210,50 @@ class AqaraW100ManuCluster(XiaomiAqaraE1Cluster):
             for marker in W100ExternalSensorsCluster._MEASUREMENT_MARKER.values()
         ):
             self.endpoint.w100_external_sensors.handle_raw_sensor(payload)
+
+    async def write_command_raw(
+        self,
+        value: bytes,
+    ) -> list[list[foundation.WriteAttributesStatusRecord]]:
+        """Write Aqara command_raw attribute."""
+        command_raw_attr = self.AttributeDefs.command_raw
+
+        zcl_attr = foundation.Attribute(command_raw_attr.id, foundation.TypeValue())
+        zcl_attr.value.type = command_raw_attr.zcl_type
+        zcl_attr.value.value = command_raw_attr.type(bytes(value))
+
+        result = await self.write_attributes_raw(
+            [zcl_attr],
+            manufacturer_code=AQARA_MFG_CODE,
+        )
+
+        if not isinstance(result[0], list):
+            return [
+                [
+                    foundation.WriteAttributesStatusRecord(
+                        status=result[0],
+                        attrid=command_raw_attr.id,
+                    )
+                ]
+            ]
+
+        records = result[0]
+
+        if (
+            len(records) == 1
+            and records[0].status == foundation.Status.SUCCESS
+            and records[0].attrid is None
+        ):
+            return [
+                [
+                    foundation.WriteAttributesStatusRecord(
+                        status=foundation.Status.SUCCESS,
+                        attrid=command_raw_attr.id,
+                    )
+                ]
+            ]
+
+        return [records]
 
 
 class W100PmtsdCluster(LocalDataCluster):
@@ -286,19 +328,28 @@ class W100PmtsdCluster(LocalDataCluster):
             return
 
         length_idx = idx + len(self.PMTSD_REQUEST_MARKER)
+        if length_idx >= len(payload):
+            self.warning("Ignored PMTSD payload: missing length byte")
+            return
+
         data_len = payload[length_idx]
         start = length_idx + 1
         end = start + data_len
 
         if end > len(payload):
-            self.debug(
-                "PMTSD frame truncated: claimed=%d actual=%d",
+            self.warning(
+                "Ignored PMTSD payload: truncated frame (claimed=%d, actual=%d)",
                 data_len,
                 len(payload) - start,
             )
             return
 
-        raw_str = payload[start:end].decode("ascii").rstrip("\x00")
+        try:
+            raw_str = payload[start:end].decode("ascii").rstrip("\x00")
+        except UnicodeDecodeError:
+            self.warning("Ignored PMTSD payload: non-ASCII data")
+            return
+
         report: dict[str, int | float] = {}
 
         for part in raw_str.split("_"):
@@ -308,12 +359,23 @@ class W100PmtsdCluster(LocalDataCluster):
             key = part[:1].lower()
             value = part[1:]
 
-            if key in ("p", "m", "s", "d"):
-                report[key] = int(value)
-            elif key == "t":
-                report[key] = float(value)
-            else:
-                self.debug("Unknown PMTSD key: %r in %r", key, raw_str)
+            try:
+                if key in ("p", "m", "s", "d"):
+                    report[key] = int(value)
+                elif key == "t":
+                    report[key] = float(value)
+                else:
+                    self.debug("Unknown PMTSD key: %r in %r", key, raw_str)
+            except ValueError:
+                self.warning(
+                    "Ignored PMTSD payload: invalid value for key %r -> %r",
+                    key,
+                    value,
+                )
+                return
+
+        if not report:
+            return
 
         self._apply_pmtsd_from_w100(report)
 
@@ -408,7 +470,6 @@ class W100PmtsdCluster(LocalDataCluster):
 
     async def _write_frame_to_w100(self, ascii_str: str) -> None:
         frame = self._build_frame_to_w100(ascii_str)
-        self.debug("w100test PMTSD frame: %s -> %r", ascii_str, frame)
         await self.endpoint.aqara_w100_manu.write_attributes(
             {
                 self.endpoint.aqara_w100_manu.AttributeDefs.command_raw.id: t.LVBytes(
@@ -448,9 +509,7 @@ class W100PmtsdCluster(LocalDataCluster):
             self._update_attribute(self.SHOW_FAN_ATTR, resolved[self.SHOW_FAN_ATTR])
             await self.sync_state_to_w100()
 
-        return [[foundation.WriteAttributesStatusRecord(
-            foundation.Status.SUCCESS,
-        )]]
+        return [[foundation.WriteAttributesStatusRecord(foundation.Status.SUCCESS)]]
 
 
 class W100ThermostatControlModeCluster(LocalDataCluster):
@@ -514,10 +573,12 @@ class W100ThermostatControlModeCluster(LocalDataCluster):
 
         desired = bool(resolved.get(self.AttributeDefs.thermostat_control_mode.id))
         frame = self._build_command(desired)
-        self.debug("w100test thermostat control mode: enabled=%s, frame=%r", desired, frame)
+
+        if desired:
+            return await self.endpoint.aqara_w100_manu.write_command_raw(frame)
 
         return await self.endpoint.aqara_w100_manu.write_attributes(
-            {AqaraW100ManuCluster.AttributeDefs.command_raw.id: frame},
+            {AqaraW100ManuCluster.AttributeDefs.command_raw.id: t.LVBytes(frame)},
             manufacturer=AQARA_MFG_CODE,
             **kwargs,
         )
@@ -635,10 +696,7 @@ class W100ExternalSensorsCluster(LocalDataCluster):
 
     async def _send_cached_attr(self, attrid: int) -> None:
         cmd = self._build_measurement(attrid, self.get(attrid))
-        self.debug(
-            "w100test external measurement: attr=0x%04X, value=%d, frame=%r",
-            attrid, self.get(attrid), cmd,
-        )
+
         await self.endpoint.aqara_w100_manu.write_attributes(
             {AqaraW100ManuCluster.AttributeDefs.command_raw.id: cmd},
             manufacturer=AQARA_MFG_CODE,
@@ -658,11 +716,14 @@ class W100ExternalSensorsCluster(LocalDataCluster):
         if self.AttributeDefs.external_sensor.id in resolved:
             external = bool(resolved[self.AttributeDefs.external_sensor.id])
             for frame in self._build_source_frames(external):
-                await self.endpoint.aqara_w100_manu.write_attributes(
-                    {AqaraW100ManuCluster.AttributeDefs.command_raw.id: frame},
-                    manufacturer=AQARA_MFG_CODE,
-                    **kwargs,
-                )
+                if external:
+                    await self.endpoint.aqara_w100_manu.write_command_raw(frame)
+                else:
+                    await self.endpoint.aqara_w100_manu.write_attributes(
+                        {AqaraW100ManuCluster.AttributeDefs.command_raw.id: frame},
+                        manufacturer=AQARA_MFG_CODE,
+                        **kwargs,
+                    )
 
         resolved_measurements = {
             attrid: resolved[attrid]
@@ -687,9 +748,7 @@ class W100ExternalSensorsCluster(LocalDataCluster):
             for attrid in resolved_measurements:
                 self.create_catching_task(self._send_cached_attr(attrid))
 
-        return [[foundation.WriteAttributesStatusRecord(
-            foundation.Status.SUCCESS,
-        )]]
+        return [[foundation.WriteAttributesStatusRecord(foundation.Status.SUCCESS)]]
 
 
 class W100ButtonCluster(CustomCluster, MultistateInput):
@@ -717,18 +776,20 @@ class W100ButtonCluster(CustomCluster, MultistateInput):
     @classmethod
     def automation_triggers(cls) -> dict:
         return {
-            (cls.PLUS_BUTTON, SHORT_PRESS): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 1},
-            (cls.PLUS_BUTTON, DOUBLE_PRESS): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 1},
-            (cls.PLUS_BUTTON, LONG_PRESS): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 1},
-            (cls.PLUS_BUTTON, LONG_RELEASE): {COMMAND: COMMAND_RELEASE, ENDPOINT_ID: 1},
-            (cls.CENTER_BUTTON, SHORT_PRESS): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 2},
-            (cls.CENTER_BUTTON, DOUBLE_PRESS): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 2},
-            (cls.CENTER_BUTTON, LONG_PRESS): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 2},
-            (cls.CENTER_BUTTON, LONG_RELEASE): {COMMAND: COMMAND_RELEASE, ENDPOINT_ID: 2},
-            (cls.MINUS_BUTTON, SHORT_PRESS): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 3},
-            (cls.MINUS_BUTTON, DOUBLE_PRESS): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 3},
-            (cls.MINUS_BUTTON, LONG_PRESS): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 3},
-            (cls.MINUS_BUTTON, LONG_RELEASE): {COMMAND: COMMAND_RELEASE, ENDPOINT_ID: 3},
+            (SHORT_PRESS, cls.PLUS_BUTTON): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 1},
+            (DOUBLE_PRESS, cls.PLUS_BUTTON): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 1},
+            (LONG_PRESS, cls.PLUS_BUTTON): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 1},
+            (LONG_RELEASE, cls.PLUS_BUTTON): {COMMAND: COMMAND_RELEASE, ENDPOINT_ID: 1},
+
+            (SHORT_PRESS, cls.CENTER_BUTTON): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 2},
+            (DOUBLE_PRESS, cls.CENTER_BUTTON): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 2},
+            (LONG_PRESS, cls.CENTER_BUTTON): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 2},
+            (LONG_RELEASE, cls.CENTER_BUTTON): {COMMAND: COMMAND_RELEASE, ENDPOINT_ID: 2},
+
+            (SHORT_PRESS, cls.MINUS_BUTTON): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 3},
+            (DOUBLE_PRESS, cls.MINUS_BUTTON): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 3},
+            (LONG_PRESS, cls.MINUS_BUTTON): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 3},
+            (LONG_RELEASE, cls.MINUS_BUTTON): {COMMAND: COMMAND_RELEASE, ENDPOINT_ID: 3},
         }
 
     def _update_attribute(self, attrid: int, value: Any) -> None:
@@ -835,6 +896,9 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
 
     def _update_attribute(self, attrid: int, value: Any) -> None:
         if attrid == TemperatureMeasurement.AttributeDefs.measured_value.id:
+            # W100 display truncates temperature to one decimal place, so mirror
+            # that value in HA and the local thermostat cluster to avoid small
+            # display differences.
             value = int(value / 10) * 10
             super()._update_attribute(attrid, value)
             self.endpoint.thermostat._update_attribute(
@@ -950,6 +1014,7 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
     .number(
         attribute_name="high_humidity",
         cluster_id=AqaraW100ManuCluster.cluster_id,
+        device_class=NumberDeviceClass.HUMIDITY,
         entity_type=EntityType.CONFIG,
         min_value=65.0,
         max_value=100.0,
@@ -963,6 +1028,7 @@ class W100TemperatureMeasurement(CustomCluster, TemperatureMeasurement):
     .number(
         attribute_name="low_humidity",
         cluster_id=AqaraW100ManuCluster.cluster_id,
+        device_class=NumberDeviceClass.HUMIDITY,
         entity_type=EntityType.CONFIG,
         min_value=0.0,
         max_value=30.0,
