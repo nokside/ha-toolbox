@@ -65,7 +65,7 @@ class ReportMode(t.enum8):
 
 
 class AlertState(t.enum8):
-    Clear = 0
+    Normal = 0
     High = 1
     Low = 2
 
