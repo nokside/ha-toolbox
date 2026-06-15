@@ -62,30 +62,36 @@ class ReportMode(t.enum8):
 
 
 class FP300PowerConfiguration(XiaomiPowerConfigurationPercent):
-    """FP300 battery: trust only Aqara 0x00F7, ignore direct ZCL battery attrs."""
+    """FP300 power cluster with battery values from Aqara attributes."""
 
-    def battery_reported(self, voltage_mv: int) -> None:
-        super()._update_attribute(
+    def handle_cluster_general_request(
+        self,
+        hdr: foundation.ZCLHeader,
+        args: list,
+        *,
+        dst_addressing=None,
+    ) -> None:
+        """Ignore direct battery reports from the device."""
+        if hdr.command_id != foundation.GeneralCommand.Report_Attributes:
+            return super().handle_cluster_general_request(
+                hdr,
+                args,
+                dst_addressing=dst_addressing,
+            )
+
+        battery_attrs = {
             self.BATTERY_VOLTAGE_ATTR,
-            voltage_mv,
-        )
-
-    def battery_percent_reported(self, battery_percent: int) -> None:
-        super()._update_attribute(
             self.BATTERY_PERCENTAGE_REMAINING,
-            battery_percent * 2,
-        )
+        }
 
-    def _update_attribute(self, attrid: int, value: Any) -> None:
-        # Ignore direct 0x0001/0x0020 and 0x0001/0x0021 from device.
-        # Real values come through battery_reported() / battery_percent_reported().
-        if attrid in (
-            self.BATTERY_VOLTAGE_ATTR,
-            self.BATTERY_PERCENTAGE_REMAINING,
-        ):
+        if all(attr.attrid in battery_attrs for attr in args.attribute_reports):
             return
 
-        super()._update_attribute(attrid, value)
+        return super().handle_cluster_general_request(
+            hdr,
+            args,
+            dst_addressing=dst_addressing,
+        )
 
 
 class AqaraFP300ManuCluster(XiaomiAqaraE1Cluster):
@@ -756,6 +762,11 @@ class FP300LedScheduleCluster(LocalDataCluster):
         cluster_id=AqaraFP300ManuCluster.cluster_id,
         device_class=BinarySensorDeviceClass.MOTION,
         entity_type=EntityType.DIAGNOSTIC,
+        reporting_config=ReportingConfig(
+        min_interval=0,
+        max_interval=900,
+        reportable_change=1,
+    ),
         initially_disabled=True,
         translation_key="pir_detection",
         fallback_name="PIR detection",
@@ -765,7 +776,8 @@ class FP300LedScheduleCluster(LocalDataCluster):
         cluster_id=FP300PowerConfiguration.cluster_id,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfElectricPotential.MILLIVOLT,
+        unit=UnitOfElectricPotential.VOLT,
+        multiplier=0.1,
         entity_type=EntityType.DIAGNOSTIC,
         initially_disabled=True,
         translation_key="battery_voltage",
