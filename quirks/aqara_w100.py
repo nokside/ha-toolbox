@@ -215,44 +215,47 @@ class AqaraW100ManuCluster(XiaomiAqaraE1Cluster):
         self,
         value: bytes,
     ) -> list[list[foundation.WriteAttributesStatusRecord]]:
-        """Write Aqara command_raw attribute."""
+        """Write Aqara command_raw attribute using raw ZCL.
+    
+        The command_raw attribute carries opaque Aqara/Lumi frames. Some valid W100
+        frames exceed zigpy's normal WriteAttributes helper size limit and must be
+        sent as a single LVBytes attribute value.
+        """
         command_raw_attr = self.AttributeDefs.command_raw
-
+    
         zcl_attr = foundation.Attribute(command_raw_attr.id, foundation.TypeValue())
         zcl_attr.value.type = command_raw_attr.zcl_type
         zcl_attr.value.value = command_raw_attr.type(bytes(value))
-
+    
         result = await self.write_attributes_raw(
             [zcl_attr],
             manufacturer_code=AQARA_MFG_CODE,
         )
-
-        if not isinstance(result[0], list):
+    
+        records = result[0]
+    
+        def command_raw_status(
+            status: foundation.Status,
+        ) -> list[list[foundation.WriteAttributesStatusRecord]]:
             return [
                 [
                     foundation.WriteAttributesStatusRecord(
-                        status=result[0],
+                        status=status,
                         attrid=command_raw_attr.id,
                     )
                 ]
             ]
-
-        records = result[0]
-
+    
+        if not isinstance(records, list):
+            return command_raw_status(records)
+    
         if (
             len(records) == 1
             and records[0].status == foundation.Status.SUCCESS
             and records[0].attrid is None
         ):
-            return [
-                [
-                    foundation.WriteAttributesStatusRecord(
-                        status=foundation.Status.SUCCESS,
-                        attrid=command_raw_attr.id,
-                    )
-                ]
-            ]
-
+            return command_raw_status(foundation.Status.SUCCESS)
+    
         return [records]
 
 
@@ -318,7 +321,9 @@ class W100PmtsdCluster(LocalDataCluster):
 
     def handle_raw_thermostat(self, payload: bytes) -> None:
         if payload.endswith(self.PMTSD_REQUEST_MARKER):
-            self.create_catching_task(self._write_frame_to_w100(self._build_pmtsd_to_w100()))
+            self.create_catching_task(
+                self._write_frame_to_w100(self._build_pmtsd_to_w100())
+            )
         else:
             self._pmtsd_from_w100(payload)
 
@@ -445,39 +450,29 @@ class W100PmtsdCluster(LocalDataCluster):
         thermostat = self.endpoint.thermostat
         system_mode = thermostat.get(self.SYSTEM_MODE_ATTR)
         is_off = system_mode == Thermostat.SystemMode.Off
+        active_mode = self.get(self.LAST_ACTIVE_MODE_ATTR) if is_off else system_mode
     
-        if is_off:
-            active_mode = self.get(self.LAST_ACTIVE_MODE_ATTR)
-        else:
-            active_mode = system_mode
+        setpoint_attr = (
+            self.COOLING_SETPOINT_ATTR
+            if active_mode == Thermostat.SystemMode.Cool
+            else self.HEATING_SETPOINT_ATTR
+        )
     
-        if active_mode == Thermostat.SystemMode.Cool:
-            setpoint = thermostat.get(self.COOLING_SETPOINT_ATTR)
-        else:
-            setpoint = thermostat.get(self.HEATING_SETPOINT_ATTR)
-    
-        power = 1 if is_off else 0
-        mode = self.SYSTEM_MODE_TO_PMTSD_M[active_mode]
-    
-        parts = [f"P{power}", f"M{mode}", f"T{setpoint / 100}"]
+        parts = [
+            f"P{1 if is_off else 0}",
+            f"M{self.SYSTEM_MODE_TO_PMTSD_M[active_mode]}",
+            f"T{thermostat.get(setpoint_attr) / 100}",
+        ]
     
         if self.get(self.SHOW_FAN_ATTR):
             fan_mode = self.endpoint.fan.get(self.FAN_MODE_ATTR)
-            speed = self.FAN_MODE_TO_PMTSD_S[fan_mode]
-            parts.append(f"S{speed}")
+            parts.append(f"S{self.FAN_MODE_TO_PMTSD_S[fan_mode]}")
     
         return "_".join(parts)
 
     async def _write_frame_to_w100(self, ascii_str: str) -> None:
         frame = self._build_frame_to_w100(ascii_str)
-        await self.endpoint.aqara_w100_manu.write_attributes(
-            {
-                self.endpoint.aqara_w100_manu.AttributeDefs.command_raw.id: t.LVBytes(
-                    frame
-                ),
-            },
-            manufacturer=AQARA_MFG_CODE,
-        )
+        await self.endpoint.aqara_w100_manu.write_command_raw(frame)
 
     async def sync_state_to_w100(self) -> None:
         if not (
@@ -526,8 +521,10 @@ class W100ThermostatControlModeCluster(LocalDataCluster):
         )
 
     # Lumi 9-byte frame headers (precomputed for fixed-length payloads)
-    LUMI_HEADER_MODE_ON: Final = bytes.fromhex("aa713244006f02412f")    # cmd=0x02, payload=47b
-    LUMI_HEADER_MODE_OFF: Final = bytes.fromhex("aa711c440085044119")   # cmd=0x04, payload=25b
+    # cmd=0x02, payload=47b
+    LUMI_HEADER_MODE_ON: Final = bytes.fromhex("aa713244006f02412f")
+    # cmd=0x04, payload=25b
+    LUMI_HEADER_MODE_OFF: Final = bytes.fromhex("aa711c440085044119")
 
     # Common prefix for mode toggle commands
     MODE_TOGGLE_PREFIX: Final = bytes.fromhex("6891000018")
@@ -574,14 +571,7 @@ class W100ThermostatControlModeCluster(LocalDataCluster):
         desired = bool(resolved.get(self.AttributeDefs.thermostat_control_mode.id))
         frame = self._build_command(desired)
 
-        if desired:
-            return await self.endpoint.aqara_w100_manu.write_command_raw(frame)
-
-        return await self.endpoint.aqara_w100_manu.write_attributes(
-            {AqaraW100ManuCluster.AttributeDefs.command_raw.id: t.LVBytes(frame)},
-            manufacturer=AQARA_MFG_CODE,
-            **kwargs,
-        )
+        return await self.endpoint.aqara_w100_manu.write_command_raw(frame)
 
 
 class W100ExternalSensorsCluster(LocalDataCluster):
@@ -611,9 +601,12 @@ class W100ExternalSensorsCluster(LocalDataCluster):
     TEMPERATURE_CHANNEL: Final = b"\x14"
 
     # Lumi 9-byte frame headers (precomputed for fixed-length payloads)
-    LUMI_HEADER_SOURCE_EXTERNAL: Final = bytes.fromhex("aa713244006f02412f")  # cmd=0x02, payload=47b
-    LUMI_HEADER_SOURCE_INTERNAL: Final = bytes.fromhex("aa711c440085044119")  # cmd=0x04, payload=25b
-    LUMI_HEADER_MEASUREMENT: Final = bytes.fromhex("aa711344008e054110")      # cmd=0x05, payload=16b
+    # cmd=0x02, payload=47b
+    LUMI_HEADER_SOURCE_EXTERNAL: Final = bytes.fromhex("aa713244006f02412f")
+    # cmd=0x04, payload=25b
+    LUMI_HEADER_SOURCE_INTERNAL: Final = bytes.fromhex("aa711c440085044119")
+    # cmd=0x05, payload=16b
+    LUMI_HEADER_MEASUREMENT: Final = bytes.fromhex("aa711344008e054110")
 
     # Tails for source-external command (contains Chinese labels: 湿度 / 温度)
     SOURCE_EXTERNAL_HUMIDITY_TAIL: Final = bytes.fromhex(
@@ -634,7 +627,7 @@ class W100ExternalSensorsCluster(LocalDataCluster):
         AttributeDefs.external_sensor.id: False,
     }
 
-    def _build_source_frames(self, external: bool) -> tuple[t.LVBytes, t.LVBytes]:
+    def _build_source_frames(self, external: bool) -> tuple[bytes, bytes]:
         device_mac = self.endpoint.device.ieee.serialize()[::-1]
         timestamp = int(time.time()).to_bytes(4, "big")
 
@@ -672,13 +665,13 @@ class W100ExternalSensorsCluster(LocalDataCluster):
                 + bytes(12)
             )
 
-        return t.LVBytes(humidity), t.LVBytes(temperature)
+        return humidity, temperature
 
-    def _build_measurement(self, attrid: int, raw_value: int) -> t.LVBytes:
+    def _build_measurement(self, attrid: int, raw_value: int) -> bytes:
         encoded = struct.pack(">f", float(raw_value))
         device_mac = self.endpoint.device.ieee.serialize()[::-1]
         fictive_sensor_mac = device_mac
-        return t.LVBytes(
+        return (
             self.LUMI_HEADER_MEASUREMENT
             + fictive_sensor_mac
             + self._MEASUREMENT_MARKER[attrid]
@@ -697,10 +690,7 @@ class W100ExternalSensorsCluster(LocalDataCluster):
     async def _send_cached_attr(self, attrid: int) -> None:
         cmd = self._build_measurement(attrid, self.get(attrid))
 
-        await self.endpoint.aqara_w100_manu.write_attributes(
-            {AqaraW100ManuCluster.AttributeDefs.command_raw.id: cmd},
-            manufacturer=AQARA_MFG_CODE,
-        )
+        await self.endpoint.aqara_w100_manu.write_command_raw(cmd)
 
     async def write_attributes(
         self,
@@ -716,14 +706,7 @@ class W100ExternalSensorsCluster(LocalDataCluster):
         if self.AttributeDefs.external_sensor.id in resolved:
             external = bool(resolved[self.AttributeDefs.external_sensor.id])
             for frame in self._build_source_frames(external):
-                if external:
-                    await self.endpoint.aqara_w100_manu.write_command_raw(frame)
-                else:
-                    await self.endpoint.aqara_w100_manu.write_attributes(
-                        {AqaraW100ManuCluster.AttributeDefs.command_raw.id: frame},
-                        manufacturer=AQARA_MFG_CODE,
-                        **kwargs,
-                    )
+                await self.endpoint.aqara_w100_manu.write_command_raw(frame)
 
         resolved_measurements = {
             attrid: resolved[attrid]
