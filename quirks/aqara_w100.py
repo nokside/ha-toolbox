@@ -215,17 +215,13 @@ class AqaraW100ManuCluster(XiaomiAqaraE1Cluster):
         self,
         value: bytes,
     ) -> list[list[foundation.WriteAttributesStatusRecord]]:
-        """Write Aqara command_raw attribute using raw ZCL.
+        """Write one Aqara/Lumi command_raw frame, bypassing zigpy's 50-byte write helper limit."""
     
-        The command_raw attribute carries opaque Aqara/Lumi frames. Some valid W100
-        frames exceed zigpy's normal WriteAttributes helper size limit and must be
-        sent as a single LVBytes attribute value.
-        """
-        command_raw_attr = self.AttributeDefs.command_raw
+        attr_def = self.AttributeDefs.command_raw
     
-        zcl_attr = foundation.Attribute(command_raw_attr.id, foundation.TypeValue())
-        zcl_attr.value.type = command_raw_attr.zcl_type
-        zcl_attr.value.value = command_raw_attr.type(bytes(value))
+        zcl_attr = foundation.Attribute(attr_def.id, foundation.TypeValue())
+        zcl_attr.value.type = attr_def.zcl_type
+        zcl_attr.value.value = attr_def.type(value)
     
         result = await self.write_attributes_raw(
             [zcl_attr],
@@ -234,29 +230,10 @@ class AqaraW100ManuCluster(XiaomiAqaraE1Cluster):
     
         records = result[0]
     
-        def command_raw_status(
-            status: foundation.Status,
-        ) -> list[list[foundation.WriteAttributesStatusRecord]]:
-            return [
-                [
-                    foundation.WriteAttributesStatusRecord(
-                        status=status,
-                        attrid=command_raw_attr.id,
-                    )
-                ]
-            ]
+        if isinstance(records, list):
+            return [records]
     
-        if not isinstance(records, list):
-            return command_raw_status(records)
-    
-        if (
-            len(records) == 1
-            and records[0].status == foundation.Status.SUCCESS
-            and records[0].attrid is None
-        ):
-            return command_raw_status(foundation.Status.SUCCESS)
-    
-        return [records]
+        return [[foundation.WriteAttributesStatusRecord(records)]]
 
 
 class W100PmtsdCluster(LocalDataCluster):
