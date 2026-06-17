@@ -1,12 +1,45 @@
 # Home Assistant Toolbox
 
-A small collection of custom resources for Home Assistant.
+[![Home Assistant](https://img.shields.io/badge/Home_Assistant-Custom_resources-41BDF5?logo=home-assistant)](https://www.home-assistant.io/)
 
-## Structure
+A collection of custom resources for Home Assistant.
 
-- [`quirks/`](quirks/) — custom ZHA quirks
-- [`blueprints/automation/`](blueprints/automation/) — automation blueprints
+## 📦 Resources
 
-## Notes
+- **[`quirks`](quirks/)** — Custom ZHA quirks.
+- **[`blueprints/automation`](blueprints/automation/)** — Automation blueprints.
 
-Made for personal use. Some files may require adaptation for your setup.
+## ⚙️ Installation
+
+<details>
+<summary><b>ZHA Custom Quirks</b></summary>
+
+1. Configure the custom quirks path in `configuration.yaml` if it is not already set:
+
+   ```yaml
+   zha:
+     custom_quirks_path: /config/your_custom_quirks_folder
+   ```
+
+2. Copy the required `.py` files from [`quirks`](quirks/) to the directory specified in `custom_quirks_path`.
+
+3. Restart Home Assistant.
+
+4. Re-pair or reconfigure the device if needed.
+
+</details>
+
+<details>
+<summary><b>Blueprints</b></summary>
+
+1. Open a blueprint file in [`blueprints/automation`](blueprints/automation/).
+
+2. Copy the **Raw** file URL.
+
+3. In Home Assistant, go to:
+
+   Settings → Automations & scenes → Blueprints → Import blueprint
+
+4. Paste the URL and click **Import**.
+
+</details>
