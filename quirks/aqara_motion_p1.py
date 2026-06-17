@@ -7,6 +7,7 @@ from zigpy import types as t
 from zigpy.quirks.v2 import QuirkBuilder
 from zigpy.quirks.v2.homeassistant import (
     EntityType,
+    LIGHT_LUX,
     UnitOfElectricPotential,
     UnitOfTime,
 )
@@ -37,28 +38,23 @@ class MotionSensitivity(t.enum8):
 
 
 class AqaraP1PowerConfigurationCluster(XiaomiPowerConfiguration):
-    """Power cluster for Aqara Motion Sensor P1 with Aqara-like coarse battery percentage."""
+    """Power cluster for Aqara Motion Sensor P1."""
 
-    FULL_THRESHOLD_MV: Final = 2880
-    LOW_THRESHOLD_MV: Final = 2760
-
-    def battery_reported(self, voltage_mv: int) -> None:
-        """Update raw battery voltage in mV and derived battery percentage."""
-        super()._update_attribute(self.BATTERY_VOLTAGE_ATTR, voltage_mv)
-        self._update_battery_percentage(voltage_mv)
+    BATTERY_100: Final = 2880
+    BATTERY_0: Final = 2760
 
     def _update_battery_percentage(self, voltage_mv: int) -> None:
-        """Update coarse battery percentage from battery voltage."""
-        if voltage_mv >= self.FULL_THRESHOLD_MV:
-            percentage = 100
-        elif voltage_mv > self.LOW_THRESHOLD_MV:
-            percentage = 50
+        """Update coarse battery percentage from battery voltage in mV."""
+        if voltage_mv >= self.BATTERY_100:
+            zcl_percentage = 100
+        elif voltage_mv > self.BATTERY_0:
+            zcl_percentage = 50
         else:
-            percentage = 0
+            zcl_percentage = 0
 
         self._update_attribute(
             self.BATTERY_PERCENTAGE_REMAINING,
-            percentage * 2,
+            zcl_percentage * 2,
         )
 
 
@@ -100,8 +96,8 @@ class AqaraP1ManuCluster(XiaomiAqaraE1Cluster):
         super()._update_attribute(attrid, value)
 
         if attrid == self.MOTION_ILLUMINANCE_ATTR:
-            self.endpoint.illuminance.motion_illuminance_reported(value)
-            self.endpoint.aqara_p1_occupancy.motion_reported()
+            self.endpoint.illuminance.illuminance_reported(value)
+            self.endpoint.aqara_p1_occupancy.occupied_reported()
 
 
 class AqaraP1OccupancyCluster(LocalDataCluster):
@@ -111,6 +107,8 @@ class AqaraP1OccupancyCluster(LocalDataCluster):
     ep_attribute = "aqara_p1_occupancy"
 
     FALLBACK_DETECTION_INTERVAL: Final = 30
+    # Small margin for reports that arrive after the configured detection interval.
+    DETECTION_INTERVAL_MARGIN: Final = 2
 
     class AttributeDefs(BaseAttributeDefs):
         """Aqara P1 local occupancy attributes."""
@@ -122,26 +120,13 @@ class AqaraP1OccupancyCluster(LocalDataCluster):
             manufacturer_code=AQARA_MFG_CODE,
         )
 
-        occupancy_timeout: Final = ZCLAttributeDef(
-            id=0xF000,
-            type=t.uint16_t,
-            access="rwp",
-            manufacturer_code=AQARA_MFG_CODE,
-        )
-
-    _DEFAULT_VALUES = {
-        AttributeDefs.occupancy.id: False,
-        AttributeDefs.occupancy_timeout.id: 2,
-    }
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Init local occupancy timer."""
         super().__init__(*args, **kwargs)
         self._timer_handle: asyncio.TimerHandle | None = None
-        self._loop = asyncio.get_running_loop()
 
-    def motion_reported(self) -> None:
-        """Update occupancy from motion report and restart reset timer."""
+    def occupied_reported(self) -> None:
+        """Update occupancy from an occupied report."""
         self._update_attribute(
             self.AttributeDefs.occupancy.id,
             True,
@@ -149,21 +134,20 @@ class AqaraP1OccupancyCluster(LocalDataCluster):
         self._restart_timer()
 
     def _get_occupancy_timeout(self) -> int:
-        """Get effective occupancy timeout."""
+        """Get effective occupancy reset timeout."""
         detection_interval = self.endpoint.aqara_p1_manu.get(
             AqaraP1ManuCluster.AttributeDefs.detection_interval.id,
             self.FALLBACK_DETECTION_INTERVAL,
         )
-        occupancy_timeout = self.get(self.AttributeDefs.occupancy_timeout.id)
-
-        return int(detection_interval) + int(occupancy_timeout)
+        return int(detection_interval) + self.DETECTION_INTERVAL_MARGIN
 
     def _restart_timer(self) -> None:
         """Restart local occupancy reset timer."""
-        if self._timer_handle:
+        if self._timer_handle is not None:
             self._timer_handle.cancel()
 
-        self._timer_handle = self._loop.call_later(
+        loop = asyncio.get_running_loop()
+        self._timer_handle = loop.call_later(
             self._get_occupancy_timeout(),
             self._turn_off,
         )
@@ -183,7 +167,8 @@ class AqaraP1IlluminanceCluster(LocalDataCluster):
     cluster_id = 0xFCF1
     ep_attribute = "illuminance"
 
-    MOTION_ILLUMINANCE_OFFSET: Final = 65536
+    RAW_ILLUMINANCE_OFFSET: Final = 65536
+    INVALID_ILLUMINANCE_VALUE: Final = 65000
 
     class AttributeDefs(BaseAttributeDefs):
         """Aqara P1 local illuminance attributes."""
@@ -195,32 +180,17 @@ class AqaraP1IlluminanceCluster(LocalDataCluster):
             manufacturer_code=AQARA_MFG_CODE,
         )
 
-        illuminance_calibration: Final = ZCLAttributeDef(
-            id=0xF000,
-            type=t.int16s,
-            access="rwp",
-            manufacturer_code=AQARA_MFG_CODE,
-        )
+    def illuminance_reported(self, value: int) -> None:
+        """Update illuminance from reported raw value."""
+        illuminance = int(value) - self.RAW_ILLUMINANCE_OFFSET
 
-    _DEFAULT_VALUES = {
-        AttributeDefs.illuminance.id: 0,
-        AttributeDefs.illuminance_calibration.id: 0,
-    }
+        if illuminance > self.INVALID_ILLUMINANCE_VALUE:
+            illuminance = 0
 
-    def motion_illuminance_reported(self, value: int) -> None:
-        """Update illuminance from motion-triggered raw illuminance report."""
         self._update_attribute(
             self.AttributeDefs.illuminance.id,
-            int(value) - self.MOTION_ILLUMINANCE_OFFSET,
+            illuminance,
         )
-    
-    def _update_attribute(self, attrid: int, value: Any) -> None:
-        """Apply calibration to illuminance updates."""
-        if attrid == self.AttributeDefs.illuminance.id:
-            calibration = self.get(self.AttributeDefs.illuminance_calibration.id)
-            value = max(0, int(value) + int(calibration))
-    
-        super()._update_attribute(attrid, value)
 
 
 (
@@ -250,35 +220,10 @@ class AqaraP1IlluminanceCluster(LocalDataCluster):
         endpoint_id=1,
         device_class=SensorDeviceClass.ILLUMINANCE,
         state_class=SensorStateClass.MEASUREMENT,
-        unit="lx",
+        unit=LIGHT_LUX,
         entity_type=EntityType.STANDARD,
         translation_key="illuminance",
         fallback_name="Illuminance",
-    )
-    .number(
-        attribute_name=AqaraP1IlluminanceCluster.AttributeDefs.illuminance_calibration.name,
-        cluster_id=AqaraP1IlluminanceCluster.cluster_id,
-        endpoint_id=1,
-        entity_type=EntityType.CONFIG,
-        min_value=-100.0,
-        max_value=100.0,
-        step=1.0,
-        unit="lx",
-        translation_key="illuminance_calibration",
-        fallback_name="Illuminance calibration",
-    )
-    .number(
-        attribute_name=AqaraP1OccupancyCluster.AttributeDefs.occupancy_timeout.name,
-        cluster_id=AqaraP1OccupancyCluster.cluster_id,
-        endpoint_id=1,
-        device_class=NumberDeviceClass.DURATION,
-        entity_type=EntityType.CONFIG,
-        min_value=0.0,
-        max_value=600.0,
-        step=1.0,
-        unit=UnitOfTime.SECONDS,
-        translation_key="occupancy_timeout",
-        fallback_name="Occupancy timeout",
     )
     .number(
         attribute_name=AqaraP1ManuCluster.AttributeDefs.detection_interval.name,
@@ -286,12 +231,12 @@ class AqaraP1IlluminanceCluster(LocalDataCluster):
         endpoint_id=1,
         device_class=NumberDeviceClass.DURATION,
         entity_type=EntityType.CONFIG,
-        min_value=2.0,
-        max_value=200.0,
-        step=1.0,
+        min_value=2,
+        max_value=200,
+        step=1,
         unit=UnitOfTime.SECONDS,
-        translation_key="occupancy_detection_interval",
-        fallback_name="Occupancy detection interval",
+        translation_key="detection_interval",
+        fallback_name="Detection interval",
     )
     .enum(
         attribute_name=AqaraP1ManuCluster.AttributeDefs.motion_sensitivity.name,
@@ -318,7 +263,9 @@ class AqaraP1IlluminanceCluster(LocalDataCluster):
         endpoint_id=1,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfElectricPotential.MILLIVOLT,
+        unit=UnitOfElectricPotential.VOLT,
+        multiplier=0.1,
+        suggested_display_precision=2,
         entity_type=EntityType.DIAGNOSTIC,
         initially_disabled=True,
         translation_key="battery_voltage",
