@@ -67,27 +67,27 @@ class FP300PowerConfiguration(XiaomiPowerConfigurationPercent):
     def handle_cluster_general_request(
         self,
         hdr: foundation.ZCLHeader,
-        args: list,
+        args: list[Any],
         *,
-        dst_addressing=None,
+        dst_addressing: t.AddrMode | None = None,
     ) -> None:
-        """Ignore direct battery reports from the device."""
-        if hdr.command_id != foundation.GeneralCommand.Report_Attributes:
-            return super().handle_cluster_general_request(
-                hdr,
-                args,
-                dst_addressing=dst_addressing,
-            )
+        """Filter out incorrect battery attribute reports."""
+        if hdr.command_id == foundation.GeneralCommand.Report_Attributes:
+            blocked_attrs = {
+                self.BATTERY_VOLTAGE_ATTR,
+                self.BATTERY_PERCENTAGE_REMAINING,
+            }
 
-        battery_attrs = {
-            self.BATTERY_VOLTAGE_ATTR,
-            self.BATTERY_PERCENTAGE_REMAINING,
-        }
+            args.attribute_reports = [
+                attr
+                for attr in args.attribute_reports
+                if attr.attrid not in blocked_attrs
+            ]
 
-        if all(attr.attrid in battery_attrs for attr in args.attribute_reports):
-            return
+            if not args.attribute_reports:
+                return
 
-        return super().handle_cluster_general_request(
+        super().handle_cluster_general_request(
             hdr,
             args,
             dst_addressing=dst_addressing,
