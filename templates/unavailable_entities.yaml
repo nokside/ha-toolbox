@@ -1,0 +1,200 @@
+# System: Unavailable entities
+#
+# Diagnostic template sensor for Home Assistant.
+# Shows entities that stayed unavailable longer than configured.
+#
+# Variables:
+# - ignored_domains: domains ignored by the sensor.
+# - ignore_label: optional Home Assistant label for ignored entities/devices.
+# - ignored_entities: entities ignored by the sensor.
+# - ignored_device_ids: device IDs ignored by the sensor.
+# - unavailable_for: seconds an entity must stay unavailable before reporting it.
+#
+# Example:
+# ignored_device_ids:
+#   - 0123456789abcdef0123456789abcdef
+#
+# Optional variables may be left empty.
+#
+# Dashboard card example:
+#
+# type: markdown
+# title: Unavailable entities
+# content: >
+#   {% set sensor = 'sensor.system_unavailable_entities' %}
+#   {% set devices = state_attr(sensor, 'devices') or [] %}
+#   {% set entities = state_attr(sensor, 'entities') or [] %}
+#   {% if devices or entities %}
+#   {% for device in devices %}
+#   - **{{ device.name }}** ({{ device.entities.unavailable }}/{{ device.entities.total }})
+#   {% endfor %}
+#   {% for entity in entities %}
+#   - **{{ entity.name }}**
+#   {% endfor %}
+#   {% else %}
+#   ✅ No unavailable entities
+#   {% endif %}
+
+- triggers:
+    # Optional: uncomment for immediate update after template reload.
+    # - trigger: event
+    #   event_type: event_template_reloaded
+
+    - trigger: time_pattern
+      minutes: "/5"
+
+  sensor:
+    - name: "System: Unavailable entities"
+      unique_id: system_unavailable_entities
+      icon: >
+        {% if (result.devices | count) + (result.entities | count) > 0 %}
+          mdi:lan-disconnect
+        {% else %}
+          mdi:lan-connect
+        {% endif %}
+
+      variables:
+        ignored_domains:
+          - zone
+          - sun
+          - persistent_notification
+          - automation
+          - conversation
+          - button
+          - scene
+          - update
+          - tts
+          - stt
+          - media_player
+
+        ignore_label: "Diagnostics Ignore"
+
+        ignored_entities:
+          - sensor.time
+          - sensor.last_boot
+
+        ignored_device_ids:
+
+        unavailable_for: 300
+
+        result: >
+          {% if not ignored_domains %}
+            {% set ignored_domains = [] %}
+          {% elif ignored_domains is string %}
+            {% set ignored_domains =
+              ignored_domains.split(',') | map('trim') | list
+            %}
+          {% endif %}
+
+          {% if ignore_label is string %}
+            {% set ignore_label = ignore_label | trim %}
+          {% else %}
+            {% set ignore_label = '' %}
+          {% endif %}
+
+          {% if not ignored_entities %}
+            {% set ignored_entity_ids = [] %}
+          {% elif ignored_entities is string %}
+            {% set ignored_entity_ids =
+              ignored_entities.split(',') | map('trim') | list
+            %}
+          {% else %}
+            {% set ignored_entity_ids = ignored_entities %}
+          {% endif %}
+
+          {% if not ignored_device_ids %}
+            {% set ignored_device_ids = [] %}
+          {% elif ignored_device_ids is string %}
+            {% set ignored_device_ids =
+              ignored_device_ids.split(',') | map('trim') | list
+            %}
+          {% endif %}
+
+          {% if ignore_label %}
+            {% set ignored_entity_ids =
+              ignored_entity_ids + label_entities(ignore_label)
+            %}
+            {% set ignored_device_ids =
+              ignored_device_ids + label_devices(ignore_label)
+            %}
+          {% endif %}
+
+          {% set unavailable_before =
+            now() - timedelta(seconds=unavailable_for | int(300))
+          %}
+
+          {% set unavailable = namespace(
+            devices={},
+            entities=[]
+          ) %}
+
+          {% for entity in states
+            if entity.state == 'unavailable'
+            and entity.domain not in ignored_domains
+            and entity.entity_id not in ignored_entity_ids
+            and entity.entity_id is not is_hidden_entity
+            and entity.last_changed < unavailable_before %}
+
+            {% set entity_device_id = entity.entity_id | device_id %}
+
+            {% if entity_device_id %}
+              {% if entity_device_id not in ignored_device_ids %}
+                {% set unavailable_count =
+                  unavailable.devices.get(entity_device_id, 0)
+                %}
+                {% set unavailable.devices =
+                  unavailable.devices | combine({
+                    entity_device_id: unavailable_count + 1
+                  })
+                %}
+              {% endif %}
+            {% else %}
+              {% set entity_name = entity.name or entity.entity_id %}
+              {% set area = area_name(entity.entity_id) %}
+              {% set display_name =
+                entity_name ~ (' (' ~ area ~ ')' if area else '')
+              %}
+
+              {% set unavailable.entities = unavailable.entities + [{
+                'entity_id': entity.entity_id,
+                'name': display_name | trim
+              }] %}
+            {% endif %}
+          {% endfor %}
+
+          {% set result_devices = namespace(list=[]) %}
+
+          {% for device_id, unavailable_count in unavailable.devices.items() %}
+            {% if device_attr(device_id, 'entry_type') != 'service' %}
+              {% set device_name =
+                device_attr(device_id, 'name_by_user')
+                or device_attr(device_id, 'name')
+                or device_id
+              %}
+              {% set area = area_name(device_id) %}
+              {% set display_name =
+                device_name ~ (' (' ~ area ~ ')' if area else '')
+              %}
+              {% set entity_count = device_id | device_entities | count %}
+
+              {% set result_devices.list = result_devices.list + [{
+                'device_id': device_id,
+                'name': display_name | trim,
+                'entities': {
+                  'unavailable': unavailable_count,
+                  'total': entity_count
+                }
+              }] %}
+            {% endif %}
+          {% endfor %}
+
+          {{ {
+            'devices': result_devices.list | sort(attribute='name'),
+            'entities': unavailable.entities | sort(attribute='entity_id')
+          } }}
+
+      state: "{{ (result.devices | count) + (result.entities | count) }}"
+
+      attributes:
+        devices: "{{ result.devices }}"
+        entities: "{{ result.entities }}"
