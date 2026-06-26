@@ -34,17 +34,20 @@ Or import manually:
 </details>
 
 <details>
-<summary><b>Blueprints</b></summary>
+<summary><b>ZHA Custom Quirks</b></summary>
 
-1. Open a blueprint file in [`blueprints/automation`](blueprints/automation/).
+1. Configure the custom quirks path in `configuration.yaml` if it is not already set:
 
-2. Copy the **Raw** file URL.
+   ```yaml
+   zha:
+     custom_quirks_path: /config/your_custom_quirks_folder
+   ```
 
-3. In Home Assistant, go to:
+2. Copy the required `.py` files from [`quirks`](quirks/) to the directory specified in `custom_quirks_path`.
 
-   Settings → Automations & scenes → Blueprints → Import blueprint
+3. Restart Home Assistant.
 
-4. Paste the URL and click **Import**.
+4. Re-pair or reconfigure the device if needed.
 
 </details>
 
