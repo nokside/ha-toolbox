@@ -8,6 +8,7 @@ A collection of custom resources for Home Assistant.
 
 - **[`quirks`](quirks/)** — Custom ZHA quirks.
 - **[`blueprints/automation`](blueprints/automation/)** — Automation blueprints.
+- **[`templates`](templates/)** — Template entities.
 
 ## ⚙️ Installation
 
@@ -41,5 +42,14 @@ A collection of custom resources for Home Assistant.
    Settings → Automations & scenes → Blueprints → Import blueprint
 
 4. Paste the URL and click **Import**.
+
+</details>
+
+<details>
+<summary><b>Templates</b></summary>
+
+See the official documentation:
+
+- [Template integration](https://www.home-assistant.io/integrations/template/)
 
 </details>
