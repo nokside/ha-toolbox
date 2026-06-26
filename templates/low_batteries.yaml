@@ -1,0 +1,205 @@
+# System: Low batteries
+#
+# Diagnostic template sensor for Home Assistant.
+# Shows battery sensors/devices below the configured threshold.
+#
+# Settings:
+# - threshold: low battery threshold in percent.
+# - ignore_label: optional Home Assistant label for ignored entities/devices.
+# - ignored_entities: optional manual ignore list.
+#
+# Examples:
+# threshold: 30
+# ignore_label: "Diagnostics Ignore"
+#
+# ignored_entities:
+#   - sensor.some_device_battery
+#   - sensor.old_remote_battery
+#
+# Empty values are allowed:
+# ignore_label:
+# ignored_entities:
+#
+# Dashboard card example:
+#
+# type: markdown
+# title: Low batteries
+# content: >
+#   {% set batteries = state_attr('sensor.system_low_batteries', 'low_batteries') or [] %}
+#   {% if batteries %}
+#   {% for item in batteries %}
+#   - **{{ item.name }}**: {{ item.level ~ '%' if item.level != 'low' else 'low' }}
+#   {% endfor %}
+#   {% else %}
+#   ✅ No low batteries
+#   {% endif %}
+
+- triggers:
+    # Optional: uncomment for immediate update after HA start.
+    # - trigger: homeassistant
+    #   event: start
+
+    # Optional: uncomment for immediate update after template reload.
+    # - trigger: event
+    #   event_type: event_template_reloaded
+
+    - trigger: time_pattern
+      minutes: "/5"
+
+  sensor:
+    - name: "System: Low batteries"
+      unique_id: system_low_batteries
+      icon: >
+        {% if result | count > 0 %}
+          mdi:battery-alert-variant-outline
+        {% else %}
+          mdi:battery-check-outline
+        {% endif %}
+
+      variables:
+        threshold: 30
+        ignore_label:
+        ignored_entities:
+
+        result: >
+          {% if not ignored_entities %}
+            {% set ignored_entity_ids = [] %}
+          {% elif ignored_entities is string %}
+            {% set ignored_entity_ids =
+              ignored_entities.split(',') | map('trim') | list
+            %}
+          {% else %}
+            {% set ignored_entity_ids = ignored_entities %}
+          {% endif %}
+
+          {% set ignored_device_ids = [] %}
+
+          {% if ignore_label %}
+            {% set ignored_entity_ids =
+              ignored_entity_ids + label_entities(ignore_label)
+            %}
+            {% set ignored_device_ids = label_devices(ignore_label) %}
+          {% endif %}
+
+          {% set batteries = namespace(
+            numeric_batteries=[],
+            binary_batteries=[],
+            processed_device_ids=[]
+          ) %}
+
+          {% for battery in states.sensor
+            if battery.attributes.device_class == 'battery'
+            and battery.entity_id is not is_hidden_entity
+            and battery.entity_id not in ignored_entity_ids %}
+
+            {% set battery_level = battery.state | int(-1) %}
+
+            {% if 0 <= battery_level <= threshold %}
+              {% set battery_device_id = battery.entity_id | device_id %}
+              {% set ignored_device =
+                battery_device_id in ignored_device_ids
+              %}
+              {% set processed_device =
+                battery_device_id in batteries.processed_device_ids
+              %}
+
+              {% if not battery_device_id
+                or (not ignored_device and not processed_device) %}
+
+                {% set device_name = (
+                  battery_device_id
+                  and (
+                    device_attr(battery_device_id, 'name_by_user')
+                    or device_attr(battery_device_id, 'name')
+                  )
+                ) or battery.name or battery.entity_id %}
+
+                {% if battery_device_id %}
+                  {% set area = area_name(battery_device_id) %}
+                {% else %}
+                  {% set area = area_name(battery.entity_id) %}
+                {% endif %}
+
+                {% set display_name =
+                  device_name ~ (' (' ~ area ~ ')' if area else '')
+                %}
+
+                {% set batteries.numeric_batteries =
+                  batteries.numeric_batteries + [{
+                    'entity_id': battery.entity_id,
+                    'device_id': battery_device_id,
+                    'name': display_name | trim,
+                    'level': battery_level
+                  }]
+                %}
+
+                {% if battery_device_id %}
+                  {% set batteries.processed_device_ids =
+                    batteries.processed_device_ids + [battery_device_id]
+                  %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+
+          {% for battery in states.binary_sensor
+            if battery.attributes.device_class == 'battery'
+            and battery.state == 'on'
+            and battery.entity_id is not is_hidden_entity
+            and battery.entity_id not in ignored_entity_ids %}
+
+            {% set battery_device_id = battery.entity_id | device_id %}
+            {% set ignored_device =
+              battery_device_id in ignored_device_ids
+            %}
+            {% set processed_device =
+              battery_device_id in batteries.processed_device_ids
+            %}
+
+            {% if not battery_device_id
+              or (not ignored_device and not processed_device) %}
+
+              {% set device_name = (
+                battery_device_id
+                and (
+                  device_attr(battery_device_id, 'name_by_user')
+                  or device_attr(battery_device_id, 'name')
+                )
+              ) or battery.name or battery.entity_id %}
+
+              {% if battery_device_id %}
+                {% set area = area_name(battery_device_id) %}
+              {% else %}
+                {% set area = area_name(battery.entity_id) %}
+              {% endif %}
+
+              {% set display_name =
+                device_name ~ (' (' ~ area ~ ')' if area else '')
+              %}
+
+              {% set batteries.binary_batteries =
+                batteries.binary_batteries + [{
+                  'entity_id': battery.entity_id,
+                  'device_id': battery_device_id,
+                  'name': display_name | trim,
+                  'level': 'low'
+                }]
+              %}
+
+              {% if battery_device_id %}
+                {% set batteries.processed_device_ids =
+                  batteries.processed_device_ids + [battery_device_id]
+                %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+
+          {{
+            (batteries.numeric_batteries | sort(attribute='level'))
+            + (batteries.binary_batteries | sort(attribute='name'))
+          }}
+
+      state: "{{ result | count }}"
+
+      attributes:
+        low_batteries: "{{ result }}"
