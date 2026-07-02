@@ -6,7 +6,7 @@ A collection of custom resources for Home Assistant.
 
 ## 📦 Resources
 
-- **[`quirks`](quirks/)** — Custom ZHA quirks.
+- **[`quirks`](quirks/)** — Custom ZHA quirks (Requires Home Assistant **2026.7.0+**).
 - **[`blueprints/automation`](blueprints/automation/)** — Automation blueprints.
 - **[`templates`](templates/)** — Template entities.
 
@@ -35,6 +35,9 @@ Or import manually:
 
 <details>
 <summary><b>ZHA Custom Quirks</b></summary>
+
+> [!IMPORTANT]
+> **Minimum required version:** Home Assistant 2026.7.0 or newer.
 
 1. Configure the custom quirks path in `configuration.yaml` if it is not already set:
 
