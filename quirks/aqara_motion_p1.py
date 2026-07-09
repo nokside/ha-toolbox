@@ -4,7 +4,6 @@ import asyncio
 import math
 from typing import Any, Final
 
-from zha.units import UnitOfElectricPotential, UnitOfTime
 from zhaquirks import CustomCluster, LocalDataCluster
 from zhaquirks.builder import (
     EntityType,
@@ -12,6 +11,8 @@ from zhaquirks.builder import (
     QuirkBuilder,
     SensorDeviceClass,
     SensorStateClass,
+    UnitOfElectricPotential,
+    UnitOfTime,
 )
 from zigpy import types as t
 from zigpy.zcl import AttributeReportedEvent, ClusterType, foundation
