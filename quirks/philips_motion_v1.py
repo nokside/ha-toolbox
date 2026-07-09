@@ -2,9 +2,9 @@
 
 from typing import Final
 
-from zigpy.quirks import CustomCluster
-from zigpy.quirks.v2 import EntityType, QuirkBuilder
-import zigpy.types as t
+from zhaquirks.builder import QuirkBuilder
+from zhaquirks.clusters import CustomCluster
+from zigpy import types as t
 from zigpy.zcl import ClusterType
 from zigpy.zcl.clusters.general import Basic, OnOff
 from zigpy.zcl.clusters.measurement import OccupancySensing
@@ -56,25 +56,25 @@ class PhilipsMotionOccupancyCluster(CustomCluster, OccupancySensing):
     .applies_to("Philips", "SML002")
     .replaces(PhilipsMotionBasicCluster, endpoint_id=2)
     .replaces(PhilipsMotionOccupancyCluster, endpoint_id=2)
-    # Endpoint 1 has a client OnOff cluster which creates a dead duplicate motion entity.
+    # Endpoint 1 has a client OnOff cluster which creates a dead duplicate motion
+    # entity.
     .prevent_default_entity_creation(
         endpoint_id=1,
         cluster_id=OnOff.cluster_id,
         cluster_type=ClusterType.Client,
     )
-    # ZHA matches SML002 with the native five-level HueV2MotionSensitivity entity,
-    # but SML002 is a v1 sensor and uses only three sensitivity levels.
+    # ZHA matches SML002 with the native five-level HueV2MotionSensitivity
+    # entity, but SML002 is a v1 sensor and uses only three sensitivity levels.
     .prevent_default_entity_creation(
         endpoint_id=2,
         cluster_id=PhilipsMotionOccupancyCluster.cluster_id,
         unique_id_suffix="motion_sensitivity",
     )
     .enum(
-        attribute_name=PhilipsMotionOccupancyCluster.AttributeDefs.sensitivity.name,
+        attribute_name="sensitivity",
         enum_class=MotionSensitivity,
         cluster_id=PhilipsMotionOccupancyCluster.cluster_id,
         endpoint_id=2,
-        entity_type=EntityType.CONFIG,
         translation_key="motion_sensitivity",
         fallback_name="Motion sensitivity",
     )
