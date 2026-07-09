@@ -876,7 +876,6 @@ class AqaraFP300Device(QuirkV2Device):
         attribute_name="restart_device",
         attribute_value=1,
         cluster_id=AqaraFP300ManufacturerCluster.cluster_id,
-        initially_disabled=True,
         translation_key="restart_device",
         fallback_name="Restart",
     )
