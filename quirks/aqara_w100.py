@@ -701,7 +701,7 @@ class W100ThermostatCluster(LocalDataCluster):
             )
 
             if mode_flags is not None and (mode_flags & THERMOSTAT_ON_BIT):
-                await self.endpoint.w100_manu.sync_thermostat()
+                self.create_catching_task(self.endpoint.w100_manu.sync_thermostat())
 
         return result
 
@@ -753,7 +753,9 @@ class W100ExternalSensorCluster(LocalDataCluster):
                 self.AttributeDefs.external_temperature.id,
                 self.AttributeDefs.external_humidity.id,
             ):
-                await self.endpoint.w100_manu.sync_external_sensor(attrid)
+                self.create_catching_task(
+                    self.endpoint.w100_manu.sync_external_sensor(attrid)
+                )
 
         return result
 
