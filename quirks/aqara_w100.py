@@ -3,10 +3,17 @@
 The W100 is a remote control, not an HVAC thermostat. The quirk exposes a
 virtual climate entity and mirrors its state to and from the W100.
 
-A factory reset is required before pairing with ZHA. Press the Reset
+Climate state changes and external sensor values are mirrored to the W100
+only while the corresponding Thermostat control or External sensor mode is
+enabled. When a mode is disabled, changes are stored locally in Home Assistant
+and used when the corresponding mode is enabled again.
+
+When updating or replacing the quirk, or moving the W100 between Zigbee
+platforms, perform a factory reset before pairing it again. Press the Reset
 button 10 times to restore the W100 to factory default settings.
 
-Fan mode Off hides the fan indicator on the thermostat line.
+Fan mode Off is a virtual state that hides the fan indicator on the W100
+display; it is not a native W100 fan mode.
 """
 
 import functools
