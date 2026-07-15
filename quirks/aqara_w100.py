@@ -1221,6 +1221,7 @@ class W100ClimateEntity(BaseThermostat):
                 W100ThermostatCluster.AttributeDefs.system_mode.name: system_mode,
             }
         )
+        self.maybe_emit_state_changed_event()
 
     async def async_set_temperature(
         self,
@@ -1259,6 +1260,7 @@ class W100ClimateEntity(BaseThermostat):
             return
 
         await self._cluster.write_attributes(attributes)
+        self.maybe_emit_state_changed_event()
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set fan mode."""
@@ -1277,6 +1279,7 @@ class W100ClimateEntity(BaseThermostat):
                 W100ThermostatCluster.AttributeDefs.fan_mode.name: zcl_fan_mode,
             }
         )
+        self.maybe_emit_state_changed_event()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set new preset mode."""
