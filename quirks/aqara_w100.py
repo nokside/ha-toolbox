@@ -53,7 +53,6 @@ from zhaquirks.builder import (
 )
 from zhaquirks.builder.device import QuirkV2Device
 from zhaquirks.const import (
-    ATTR_ID,
     COMMAND,
     COMMAND_DOUBLE,
     COMMAND_HOLD,
@@ -63,9 +62,7 @@ from zhaquirks.const import (
     ENDPOINT_ID,
     LONG_PRESS,
     LONG_RELEASE,
-    PRESS_TYPE,
     SHORT_PRESS,
-    VALUE,
     ZHA_SEND_EVENT,
 )
 from zigpy import types as t
@@ -765,9 +762,11 @@ class W100ButtonCluster(CustomCluster, MultistateInput):
 
     PRESENT_VALUE_ATTR_ID: Final = MultistateInput.AttributeDefs.present_value.id
 
-    PLUS_BUTTON: Final = "plus"
-    CENTER_BUTTON: Final = "center"
-    MINUS_BUTTON: Final = "minus"
+    ENDPOINT_BUTTONS: Final = {
+        1: "plus",
+        2: "center",
+        3: "minus",
+    }
 
     PRESS_TYPES: Final = {
         0: COMMAND_HOLD,
@@ -776,61 +775,44 @@ class W100ButtonCluster(CustomCluster, MultistateInput):
         255: COMMAND_RELEASE,
     }
 
-    ENDPOINT_BUTTONS: Final = {
-        1: PLUS_BUTTON,
-        2: CENTER_BUTTON,
-        3: MINUS_BUTTON,
+    TRIGGER_TYPES: Final = {
+        COMMAND_SINGLE: SHORT_PRESS,
+        COMMAND_DOUBLE: DOUBLE_PRESS,
+        COMMAND_HOLD: LONG_PRESS,
+        COMMAND_RELEASE: LONG_RELEASE,
     }
 
     @classmethod
     def automation_triggers(cls) -> dict:
         """Return W100 button automation triggers."""
         return {
-            (SHORT_PRESS, cls.PLUS_BUTTON): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 1},
-            (DOUBLE_PRESS, cls.PLUS_BUTTON): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 1},
-            (LONG_PRESS, cls.PLUS_BUTTON): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 1},
-            (LONG_RELEASE, cls.PLUS_BUTTON): {COMMAND: COMMAND_RELEASE, ENDPOINT_ID: 1},
-            (SHORT_PRESS, cls.CENTER_BUTTON): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 2},
-            (DOUBLE_PRESS, cls.CENTER_BUTTON): {
-                COMMAND: COMMAND_DOUBLE,
-                ENDPOINT_ID: 2,
-            },
-            (LONG_PRESS, cls.CENTER_BUTTON): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 2},
-            (LONG_RELEASE, cls.CENTER_BUTTON): {
-                COMMAND: COMMAND_RELEASE,
-                ENDPOINT_ID: 2,
-            },
-            (SHORT_PRESS, cls.MINUS_BUTTON): {COMMAND: COMMAND_SINGLE, ENDPOINT_ID: 3},
-            (DOUBLE_PRESS, cls.MINUS_BUTTON): {COMMAND: COMMAND_DOUBLE, ENDPOINT_ID: 3},
-            (LONG_PRESS, cls.MINUS_BUTTON): {COMMAND: COMMAND_HOLD, ENDPOINT_ID: 3},
-            (LONG_RELEASE, cls.MINUS_BUTTON): {
-                COMMAND: COMMAND_RELEASE,
-                ENDPOINT_ID: 3,
-            },
+            (trigger_type, button): {
+                COMMAND: command,
+                ENDPOINT_ID: endpoint_id,
+            }
+            for endpoint_id, button in cls.ENDPOINT_BUTTONS.items()
+            for command, trigger_type in cls.TRIGGER_TYPES.items()
         }
 
-    def _update_attribute(self, attrid: int, value: Any) -> None:
-        """Emit button events from present_value updates."""
-        super()._update_attribute(attrid, value)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the W100 button cluster."""
+        super().__init__(*args, **kwargs)
+        self.on_event(
+            AttributeReportedEvent.event_type,
+            self._handle_button_report,
+        )
 
-        if attrid == self.PRESENT_VALUE_ATTR_ID:
-            press_type = self.PRESS_TYPES.get(value, f"unknown_{value}")
-            button = self.ENDPOINT_BUTTONS.get(
-                self.endpoint.endpoint_id,
-                f"ep{self.endpoint.endpoint_id}",
-            )
+    def _handle_button_report(self, event: AttributeReportedEvent) -> None:
+        """Emit a button event from a present_value report."""
+        if event.attribute_id == self.PRESENT_VALUE_ATTR_ID:
+            press_type = self.PRESS_TYPES.get(event.value)
 
-            self.listener_event(
-                ZHA_SEND_EVENT,
-                press_type,
-                {
-                    "button": button,
-                    PRESS_TYPE: press_type,
-                    ENDPOINT_ID: self.endpoint.endpoint_id,
-                    ATTR_ID: attrid,
-                    VALUE: value,
-                },
-            )
+            if press_type:
+                self.listener_event(
+                    ZHA_SEND_EVENT,
+                    press_type,
+                    {},
+                )
 
 
 class W100ThermostatControlSwitch(PlatformEntity, BaseSwitch):
@@ -1279,7 +1261,6 @@ class W100ClimateEntity(BaseThermostat):
                 W100ThermostatCluster.AttributeDefs.fan_mode.name: zcl_fan_mode,
             }
         )
-        self.maybe_emit_state_changed_event()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set new preset mode."""
