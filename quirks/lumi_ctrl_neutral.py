@@ -1,29 +1,27 @@
-"""Aqara ctrl_neutral quirks."""
+"""Quirk v2 for Aqara wall switches lumi.ctrl_neutral."""
 
 from typing import Any, Final
 
-from zhaquirks import EventableCluster
+from zhaquirks import CustomCluster
 from zhaquirks.builder import QuirkBuilder
-from zhaquirks.clusters import CustomCluster
 from zhaquirks.const import (
-    ARGS,
-    ATTRIBUTE_ID,
-    ATTRIBUTE_NAME,
-    BUTTON,
-    BUTTON_1,
-    BUTTON_2,
-    CLUSTER_ID,
     COMMAND,
-    COMMAND_ATTRIBUTE_UPDATED,
     COMMAND_DOUBLE,
     COMMAND_HOLD,
     COMMAND_RELEASE,
+    COMMAND_SINGLE,
+    DOUBLE_PRESS,
     ENDPOINT_ID,
-    VALUE,
+    LEFT,
+    LONG_PRESS,
+    LONG_RELEASE,
+    RIGHT,
+    SHORT_PRESS,
+    ZHA_SEND_EVENT,
 )
 from zigpy import types as t
 from zigpy.profiles import zha
-from zigpy.zcl import ClusterType, foundation
+from zigpy.zcl import AttributeReportedEvent, ClusterType, foundation
 from zigpy.zcl.clusters.general import (
     Basic,
     BinaryOutput,
@@ -38,29 +36,9 @@ from zigpy.zdo.types import NodeDescriptor
 
 AQARA_MFG_CODE: Final = 0x115F
 
-
-class RelayOperationMode1(t.enum8):
-    """Relay operation mode values for lumi.ctrl_neutral1."""
-
-    Relay = 18
-    Decoupled = 254
-
-
-class RelayOperationMode2(t.enum8):
-    """Relay operation mode values for lumi.ctrl_neutral2."""
-
-    Left_relay = 18
-    Right_relay = 34
-    Decoupled = 254
-
-
 AQARA_NODE_DESCRIPTOR: Final = NodeDescriptor(
-    logical_type=2,
-    complex_descriptor_available=0,
-    user_descriptor_available=0,
-    reserved=0,
-    aps_flags=0,
-    frequency_band=8,
+    byte1=2,
+    byte2=64,
     mac_capability_flags=132,
     manufacturer_code=4151,
     maximum_buffer_size=127,
@@ -71,8 +49,23 @@ AQARA_NODE_DESCRIPTOR: Final = NodeDescriptor(
 )
 
 
+class RelayOperationMode1(t.enum8):
+    """Single-rocker relay operation mode."""
+
+    Control_relay = 0x12
+    Decoupled = 0xFE
+
+
+class RelayOperationMode2(t.enum8):
+    """Double-rocker relay operation mode."""
+
+    Control_left_relay = 0x12
+    Control_right_relay = 0x22
+    Decoupled = 0xFE
+
+
 class CtrlNeutralBasicCluster(CustomCluster, Basic):
-    """Basic cluster with relay operation mode attributes."""
+    """Basic cluster."""
 
     class AttributeDefs(Basic.AttributeDefs):
         """Attribute definitions."""
@@ -80,13 +73,64 @@ class CtrlNeutralBasicCluster(CustomCluster, Basic):
         operation_mode_left: Final = ZCLAttributeDef(
             id=0xFF22,
             type=t.uint8_t,
+            access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
         operation_mode_right: Final = ZCLAttributeDef(
             id=0xFF23,
             type=t.uint8_t,
+            access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
+        reset_request: Final = ZCLAttributeDef(
+            id=0xFFF0,
+            type=t.LVBytes,
+            access="rwp",
+            manufacturer_code=AQARA_MFG_CODE,
+        )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize reset-request handling."""
+        super().__init__(*args, **kwargs)
+        self.on_event(
+            AttributeReportedEvent.event_type,
+            self._handle_attribute_report,
+        )
+
+    def _handle_attribute_report(
+        self,
+        event: AttributeReportedEvent,
+    ) -> None:
+        """Respond to an Aqara reset request."""
+        if event.attribute_id == self.AttributeDefs.reset_request.id and bytes(
+            event.value
+        ).startswith(bytes.fromhex("AA 10 05 41 87")):
+            self.create_catching_task(
+                self.write_attributes(
+                    {
+                        self.AttributeDefs.reset_request: bytes.fromhex(
+                            "AA 10 05 41 47 01 01 10 01"
+                        ),
+                    },
+                    update_cache=False,
+                )
+            )
+
+    async def apply_custom_configuration(self, *args: Any, **kwargs: Any) -> None:
+        """Read relay operation modes during device configuration."""
+        attributes = [self.AttributeDefs.operation_mode_left]
+
+        if self.endpoint.device.model == "lumi.ctrl_neutral2":
+            attributes.append(self.AttributeDefs.operation_mode_right)
+
+        for attr_def in attributes:
+            try:
+                await self.read_attributes(
+                    [attr_def],
+                    allow_cache=False,
+                )
+            except Exception as exc:
+                self.debug("Failed to read attr 0x%04X: %r", attr_def.id, exc)
 
 
 class CtrlNeutralSwitchOnOffCluster(CustomCluster, OnOff):
@@ -105,7 +149,7 @@ class CtrlNeutralSwitchOnOffCluster(CustomCluster, OnOff):
         *args: Any,
         **kwargs: Any,
     ) -> tuple[foundation.ConfigureReportingResponse]:
-        """Prevent remote configure reporting."""
+        """Prevent remote reporting configuration."""
         return (foundation.ConfigureReportingResponse.deserialize(b"\x00")[0],)
 
     def command(
@@ -150,56 +194,89 @@ class CtrlNeutralSwitchOnOffCluster(CustomCluster, OnOff):
         )
 
 
-class CtrlNeutralButtonOnOffCluster(EventableCluster, OnOff):
-    """Button OnOff cluster used for device automation triggers."""
+class CtrlNeutralButtonOnOffCluster(CustomCluster, OnOff):
+    """Normalize Aqara button report frames into semantic ZHA events."""
+
+    ON_OFF_ATTR_ID: Final = OnOff.AttributeDefs.on_off.id
+
+    FRAME_COMMANDS: Final = {
+        (0, 1): COMMAND_SINGLE,
+        (2,): COMMAND_DOUBLE,
+        (0,): COMMAND_HOLD,
+        (1,): COMMAND_RELEASE,
+    }
+
+    def handle_cluster_general_request(
+        self,
+        hdr: foundation.ZCLHeader,
+        args: Any,
+        *,
+        dst_addressing: t.AddrMode | None = None,
+    ) -> None:
+        """Emit one semantic button event for each attribute-report frame."""
+        if hdr.command_id == foundation.GeneralCommand.Report_Attributes:
+            values = tuple(
+                int(attribute.value.value)
+                for attribute in args.attribute_reports
+                if attribute.attrid == self.ON_OFF_ATTR_ID
+            )
+
+            if values:
+                command = self.FRAME_COMMANDS.get(values)
+
+                if command is not None:
+                    self.listener_event(ZHA_SEND_EVENT, command, {})
+                else:
+                    self.debug(
+                        "Ignoring unknown Aqara button frame: %s",
+                        values,
+                    )
+
+        super().handle_cluster_general_request(
+            hdr,
+            args,
+            dst_addressing=dst_addressing,
+        )
 
     async def _configure_reporting(  # pylint: disable=W0221
         self,
         *args: Any,
         **kwargs: Any,
     ) -> tuple[foundation.ConfigureReportingResponse]:
-        """Prevent remote configure reporting."""
+        """Prevent remote reporting configuration."""
         return (foundation.ConfigureReportingResponse.deserialize(b"\x00")[0],)
 
 
-def _attribute_updated_args(value: int) -> dict[str, Any]:
-    """Build attribute_updated event args for OnOff button reports."""
-    return {
-        ATTRIBUTE_ID: OnOff.AttributeDefs.on_off.id,
-        ATTRIBUTE_NAME: OnOff.AttributeDefs.on_off.name,
-        VALUE: value,
-    }
-
-
-def _attribute_updated_trigger(endpoint_id: int, value: int) -> dict[str, Any]:
-    """Build a device automation trigger for an OnOff attribute update."""
-    return {
-        ENDPOINT_ID: endpoint_id,
-        CLUSTER_ID: OnOff.cluster_id,
-        COMMAND: COMMAND_ATTRIBUTE_UPDATED,
-        ARGS: _attribute_updated_args(value),
-    }
-
+COMMAND_TO_TRIGGER_TYPE: Final = {
+    COMMAND_SINGLE: SHORT_PRESS,
+    COMMAND_DOUBLE: DOUBLE_PRESS,
+    COMMAND_HOLD: LONG_PRESS,
+    COMMAND_RELEASE: LONG_RELEASE,
+}
 
 CTRL_NEUTRAL_SINGLE_TRIGGERS: Final = {
-    (COMMAND_HOLD, BUTTON): _attribute_updated_trigger(4, 0),
-    (COMMAND_RELEASE, BUTTON): _attribute_updated_trigger(4, 1),
-    (COMMAND_DOUBLE, BUTTON): _attribute_updated_trigger(4, 2),
+    (trigger_type, COMMAND_SINGLE): {
+        COMMAND: command,
+        ENDPOINT_ID: 4,
+    }
+    for command, trigger_type in COMMAND_TO_TRIGGER_TYPE.items()
 }
 
 CTRL_NEUTRAL_DOUBLE_TRIGGERS: Final = {
-    (COMMAND_HOLD, BUTTON_1): _attribute_updated_trigger(4, 0),
-    (COMMAND_RELEASE, BUTTON_1): _attribute_updated_trigger(4, 1),
-    (COMMAND_DOUBLE, BUTTON_1): _attribute_updated_trigger(4, 2),
-    (COMMAND_HOLD, BUTTON_2): _attribute_updated_trigger(5, 0),
-    (COMMAND_RELEASE, BUTTON_2): _attribute_updated_trigger(5, 1),
-    (COMMAND_DOUBLE, BUTTON_2): _attribute_updated_trigger(5, 2),
+    (trigger_type, button): {
+        COMMAND: command,
+        ENDPOINT_ID: endpoint_id,
+    }
+    for endpoint_id, button in {
+        4: LEFT,
+        5: RIGHT,
+    }.items()
+    for command, trigger_type in COMMAND_TO_TRIGGER_TYPE.items()
 }
 
 
 (
     QuirkBuilder("LUMI", "lumi.ctrl_neutral1")
-    .applies_to("LUMI", "lumi.switch.b1lacn02")
     .friendly_name(
         manufacturer="Aqara",
         model="Wall Switch (No Neutral, Single Rocker)",
@@ -218,8 +295,6 @@ CTRL_NEUTRAL_DOUBLE_TRIGGERS: Final = {
         DeviceTemperature.cluster_id, endpoint_id=1, cluster_type=ClusterType.Server
     )
     .removes(Identify.cluster_id, endpoint_id=1, cluster_type=ClusterType.Server)
-    # .removes(Ota.cluster_id)
-    # .removes(Ota.cluster_id, endpoint_id=1, cluster_type=ClusterType.Client)
     .removes(BinaryOutput.cluster_id, endpoint_id=2, cluster_type=ClusterType.Server)
     .removes_endpoint(3)
     .removes_endpoint(5)
@@ -237,7 +312,6 @@ CTRL_NEUTRAL_DOUBLE_TRIGGERS: Final = {
 
 (
     QuirkBuilder("LUMI", "lumi.ctrl_neutral2")
-    .applies_to("LUMI", "lumi.switch.b2lacn02")
     .friendly_name(
         manufacturer="Aqara",
         model="Wall Switch (No Neutral, Double Rocker)",
@@ -260,8 +334,6 @@ CTRL_NEUTRAL_DOUBLE_TRIGGERS: Final = {
         DeviceTemperature.cluster_id, endpoint_id=1, cluster_type=ClusterType.Server
     )
     .removes(Identify.cluster_id, endpoint_id=1, cluster_type=ClusterType.Server)
-    # .removes(Ota.cluster_id)
-    # .removes(Ota.cluster_id, endpoint_id=1, cluster_type=ClusterType.Client)
     .removes(BinaryOutput.cluster_id, endpoint_id=2, cluster_type=ClusterType.Server)
     .removes(BinaryOutput.cluster_id, endpoint_id=3, cluster_type=ClusterType.Server)
     .removes_endpoint(6)
