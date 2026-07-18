@@ -46,13 +46,12 @@ class FyrturPowerConfigurationCluster(CustomCluster, PowerConfiguration):
             return False
 
         try:
-            version = tuple(int(part) for part in sw_build_id.split("."))
-        except (TypeError, ValueError):
+            parts = sw_build_id.split(".", 2)
+            return (int(parts[0]), int(parts[1])) < (2, 4)
+        except (AttributeError, IndexError, TypeError, ValueError):
             return False
 
-        return version < (2, 4, 0)
-
-    def _update_attribute(self, attrid: int, value: int | None) -> None:
+    def _update_attribute(self, attrid: int, value: Any) -> None:
         """Normalize IKEA blind battery percentage."""
         if attrid == self.BATTERY_PERCENTAGE_REMAINING_ATTR_ID and value is not None:
             needs_doubling = self._needs_doubling()
