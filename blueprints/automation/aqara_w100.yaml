@@ -188,6 +188,56 @@ conditions:
     condition: template
     value_template: "{{ has_value(w100) }}"
 
+  - alias: Check if trigger requires processing
+    condition: or
+    conditions:
+      - condition: trigger
+        id: [resync, ext_temp, ext_hum]
+
+      - condition: and
+        conditions:
+          - condition: template
+            value_template: "{{ linked != [] and has_value(linked) }}"
+
+          - condition: or
+            conditions:
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: mode
+
+                  - condition: template
+                    value_template: >-
+                      {% set target = linked if trigger.entity_id == w100 else w100 %}
+                      {{ trigger.to_state.state != states(target) }}
+
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: temperature
+
+                  - condition: template
+                    value_template: >-
+                      {% set target = linked if trigger.entity_id == w100 else w100 %}
+                      {% set temperature = trigger.to_state.attributes.get('temperature') %}
+                      {{ temperature is number
+                         and temperature != state_attr(target, 'temperature')
+                         and trigger.to_state.state == states(target) }}
+
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: fan
+
+                  - condition: template
+                    value_template: >-
+                      {% set target = linked if trigger.entity_id == w100 else w100 %}
+                      {% set fan_mode =
+                        trigger.to_state.attributes.get('fan_mode') | default('off', true) %}
+                      {% set target_fan_mode =
+                        state_attr(target, 'fan_mode') | default('off', true) %}
+                      {{ fan_mode != target_fan_mode }}
+
 actions:
   - alias: Sync climate
     if:
@@ -203,17 +253,24 @@ actions:
 
       - alias: HVAC mode
         if:
-          - condition: trigger
-            id: [mode, resync]
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: mode
+
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: resync
+
+                  - condition: template
+                    value_template: "{{ states(source) != states(target) }}"
         then:
           - variables:
               mode: >-
                 {{ states(source)
                    if trigger.id == 'resync'
                    else trigger.to_state.state }}
-
-          - condition: template
-            value_template: "{{ mode != states(target) }}"
 
           - variables:
               needs_recovery: true
@@ -246,24 +303,28 @@ actions:
 
       - alias: Temperature
         if:
-          - condition: trigger
-            id: [temperature, resync]
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: temperature
+
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: resync
+
+                  - condition: template
+                    value_template: >-
+                      {% set temperature = state_attr(source, 'temperature') %}
+                      {{ temperature is number
+                         and temperature != state_attr(target, 'temperature')
+                         and states(source) == states(target) }}
         then:
           - variables:
               temperature: >-
                 {{ state_attr(source, 'temperature')
                    if trigger.id == 'resync'
                    else trigger.to_state.attributes.get('temperature') }}
-              mode: >-
-                {{ states(source)
-                   if trigger.id == 'resync'
-                   else trigger.to_state.state }}
-
-          - condition: template
-            value_template: >-
-              {{ temperature is number
-                 and temperature != state_attr(target, 'temperature')
-                 and mode == states(target) }}
 
           - variables:
               needs_recovery: true
@@ -301,19 +362,29 @@ actions:
 
       - alias: Fan mode
         if:
-          - condition: trigger
-            id: [fan, resync]
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: fan
+
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: resync
+
+                  - condition: template
+                    value_template: >-
+                      {% set fan_mode = state_attr(source, 'fan_mode') %}
+                      {% set target_fan_mode =
+                        state_attr(target, 'fan_mode') | default('off', true) %}
+                      {{ fan_mode is not none
+                         and fan_mode != target_fan_mode }}
         then:
           - variables:
               fan_mode: >-
                 {{ state_attr(source, 'fan_mode')
                    if trigger.id == 'resync'
                    else trigger.to_state.attributes.get('fan_mode') }}
-
-          - condition: template
-            value_template: >-
-              {{ fan_mode is not none
-                 and fan_mode != state_attr(target, 'fan_mode') }}
 
           - variables:
               needs_recovery: true
@@ -347,14 +418,25 @@ actions:
   - alias: Sync external temperature
     continue_on_error: true
     if:
-      - condition: trigger
-        id: [ext_temp, resync]
       - condition: or
         conditions:
-          - condition: template
-            value_template: "{{ linked_climate_temp_hum is true and has_value(linked) }}"
-          - condition: template
-            value_template: "{{ temp_sensor != [] }}"
+          - condition: trigger
+            id: ext_temp
+
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: resync
+
+              - condition: or
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ linked_climate_temp_hum is true
+                         and has_value(linked) }}
+
+                  - condition: template
+                    value_template: "{{ temp_sensor != [] }}"
     then:
       - alias: Define source
         variables:
@@ -385,14 +467,25 @@ actions:
   - alias: Sync external humidity
     continue_on_error: true
     if:
-      - condition: trigger
-        id: [ext_hum, resync]
       - condition: or
         conditions:
-          - condition: template
-            value_template: "{{ linked_climate_temp_hum is true and has_value(linked) }}"
-          - condition: template
-            value_template: "{{ hum_sensor != [] }}"
+          - condition: trigger
+            id: ext_hum
+
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: resync
+
+              - condition: or
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ linked_climate_temp_hum is true
+                         and has_value(linked) }}
+
+                  - condition: template
+                    value_template: "{{ hum_sensor != [] }}"
     then:
       - alias: Define source
         variables:
