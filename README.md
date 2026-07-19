@@ -1,6 +1,6 @@
 # Home Assistant Toolbox
 
-[![Home Assistant](https://img.shields.io/badge/Home_Assistant-Custom_resources-41BDF5?logo=home-assistant)](https://www.home-assistant.io/)
+[![Home Assistant](https://badgen.net/badge/Home%20Assistant/Custom%20resources/41BDF5?icon=homeassistant)](https://www.home-assistant.io/)
 
 A collection of custom resources for Home Assistant.
 
