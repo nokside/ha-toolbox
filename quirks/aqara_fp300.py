@@ -7,7 +7,12 @@ from collections.abc import Iterator
 from typing import Any, Final, Literal
 
 from zha.application.helpers import safe_read, write_attributes_safe
-from zha.application.platforms import BaseEntity, PlatformEntity
+from zha.application.platforms import (
+    AttrConfig,
+    BaseEntity,
+    PlatformEntity,
+    ClusterConfig,
+)
 from zha.application.platforms.number import BaseNumber
 from zha.application.platforms.number.const import NumberMode
 from zha.application.platforms.select import BaseSelectEntity, EnumSelectInfo
@@ -338,13 +343,20 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
         """Initialize the FP300 manufacturer cluster."""
         super().__init__(*args, **kwargs)
 
-        self.on_event(
-            AttributeReportedEvent.event_type,
-            self._handle_attribute_event,
-        )
+        for event_type in (
+            AttributeReadEvent,
+            AttributeReportedEvent,
+        ):
+            self.on_event(
+                event_type.event_type,
+                self._handle_attribute_event,
+            )
 
-    def _handle_attribute_event(self, event: AttributeReportedEvent) -> None:
-        """Handle FP300 manufacturer attribute reports."""
+    def _handle_attribute_event(
+        self,
+        event: AttributeReadEvent | AttributeReportedEvent,
+    ) -> None:
+        """Handle the Aqara lifeline attribute."""
         attrid = event.attribute_id
         value = event.value
 
@@ -391,28 +403,30 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
 
         return t.LVBytes(bytes(token))
 
-    async def apply_custom_configuration(self, *args: Any, **kwargs: Any) -> None:
-        """Apply FP300 custom configuration and populate raw attribute cache."""
+    async def apply_custom_configuration(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Apply FP300 custom configuration and read the Aqara lifeline."""
         # 0x00FF is accepted by FP300, possibly part of Aqara init,
         # but no proven functional effect yet.
         try:
             await self.write_attributes(
-                {self.AttributeDefs.init_token: self._generate_init_token()},
+                {
+                    self.AttributeDefs.init_token: self._generate_init_token(),
+                },
             )
         except Exception as exc:
             self.debug("Failed to write init token: %r", exc)
 
-        for attr_def in (
-            self.AttributeDefs.detection_range_raw,
-            self.AttributeDefs.led_indicator_off_times_raw,
-        ):
-            try:
-                await self.read_attributes(
-                    [attr_def],
-                    allow_cache=False,
-                )
-            except Exception as exc:
-                self.debug("Failed to read attr 0x%04X: %r", attr_def.id, exc)
+        try:
+            await self.read_attributes(
+                [self.AttributeDefs.aqara_lifeline.name],
+                allow_cache=False,
+            )
+        except Exception as exc:
+            self.debug("Failed to read Aqara lifeline: %r", exc)
 
 
 class FP300DetectionRangeNumber(BaseNumber):
@@ -427,6 +441,16 @@ class FP300DetectionRangeNumber(BaseNumber):
     _attr_native_unit_of_measurement = UnitOfLength.METERS
     _attr_device_class = NumberDeviceClass.DISTANCE
     _attr_mode = NumberMode.SLIDER
+
+    _server_cluster_config = {
+        AqaraFP300ManufacturerCluster.cluster_id: ClusterConfig(
+            attributes={
+                AqaraFP300ManufacturerCluster.AttributeDefs.detection_range_raw: (
+                    AttrConfig(read_on_startup=False)
+                ),
+            },
+        ),
+    }
 
     def on_add(self) -> None:
         """Run when entity is added."""
@@ -476,7 +500,7 @@ class FP300DetectionRangeNumber(BaseNumber):
         raw = self._cluster.get(self._attribute_name)
 
         if raw is None:
-            return self._attr_native_max_value
+            return None
 
         return self._decode(bytes(raw))
 
@@ -502,13 +526,20 @@ class FP300DetectionRangeNumber(BaseNumber):
 class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
     """LED trigger indicator off time select backed by led_indicator_off_times_raw."""
 
-    _DEFAULT_START_HOUR: Final = 21
-    _DEFAULT_END_HOUR: Final = 9
-
     _attribute_name = (
         AqaraFP300ManufacturerCluster.AttributeDefs.led_indicator_off_times_raw.name
     )
     _attr_options = [f"{hour:02d}:00" for hour in range(24)]
+
+    _server_cluster_config = {
+        AqaraFP300ManufacturerCluster.cluster_id: ClusterConfig(
+            attributes={
+                AqaraFP300ManufacturerCluster.AttributeDefs.led_indicator_off_times_raw: (
+                    AttrConfig(read_on_startup=False)
+                ),
+            },
+        ),
+    }
 
     def __init__(
         self,
@@ -538,7 +569,7 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
 
     def handle_attribute_updated(
         self,
-        event: (AttributeReadEvent | AttributeReportedEvent | AttributeWrittenEvent),
+        event: AttributeReadEvent | AttributeReportedEvent | AttributeWrittenEvent,
     ) -> None:
         """Handle led_indicator_off_times_raw value updates."""
         if event.attribute_name == self._attribute_name:
@@ -577,12 +608,7 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
         raw = self._cluster.get(self._attribute_name)
 
         if raw is None:
-            hour = (
-                self._DEFAULT_START_HOUR
-                if self._time_field == "start"
-                else self._DEFAULT_END_HOUR
-            )
-            return self.options[hour]
+            return None
 
         start, end = self._decode(raw)
         hour = start if self._time_field == "start" else end
@@ -594,14 +620,13 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Write this LED trigger indicator off time through the raw attribute."""
-        hour = self.options.index(option)
         raw = self._cluster.get(self._attribute_name)
 
         if raw is None:
-            start = self._DEFAULT_START_HOUR
-            end = self._DEFAULT_END_HOUR
-        else:
-            start, end = self._decode(raw)
+            return
+
+        hour = self.options.index(option)
+        start, end = self._decode(raw)
 
         if self._time_field == "start":
             start = hour
