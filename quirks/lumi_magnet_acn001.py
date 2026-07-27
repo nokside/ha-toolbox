@@ -4,6 +4,7 @@ from typing import Any, Final
 
 from zhaquirks import CustomCluster, LocalDataCluster
 from zhaquirks.builder import (
+    PERCENTAGE,
     BinarySensorDeviceClass,
     EntityType,
     QuirkBuilder,
@@ -11,14 +12,88 @@ from zhaquirks.builder import (
     SensorStateClass,
     UnitOfElectricPotential,
 )
-from zhaquirks.const import BatterySize
 from zigpy import types as t
-from zigpy.zcl import AttributeReportedEvent, ClusterType, foundation
+from zigpy.zcl import (
+    AttributeReportedEvent,
+    ClusterType,
+    foundation,
+)
 from zigpy.zcl.clusters.general import Ota, PowerConfiguration
 from zigpy.zcl.clusters.security import IasZone
 from zigpy.zcl.foundation import BaseAttributeDefs, ZCLAttributeDef
 
 AQARA_MFG_CODE: Final = 0x115F
+
+
+class AqaraE1LifelineCluster(LocalDataCluster):
+    """Values decoded from the Aqara lifeline."""
+
+    cluster_id = 0xFC02
+    ep_attribute = "aqara_e1_lifeline"
+
+    BATTERY_HYSTERESIS_MV: Final = 10
+
+    BATTERY_PERCENTAGE_THRESHOLDS_MV: Final = (
+        (2870, 100),
+        (2840, 50),
+        (2810, 25),
+        (2790, 5),
+    )
+
+    class AttributeDefs(BaseAttributeDefs):
+        """Attribute definitions."""
+
+        battery_percentage: Final = ZCLAttributeDef(
+            id=0x0000,
+            type=t.uint8_t,
+            manufacturer_code=None,
+        )
+        battery_voltage: Final = ZCLAttributeDef(
+            id=0x0001,
+            type=t.Single,
+            manufacturer_code=None,
+        )
+
+    _VALID_ATTRIBUTES: set[int] = {
+        AttributeDefs.battery_percentage.id,
+        AttributeDefs.battery_voltage.id,
+    }
+
+    def update_from_voltage(self, voltage_mv: int) -> None:
+        """Update battery voltage and estimated battery percentage."""
+        self.update_attribute(
+            self.AttributeDefs.battery_voltage.id,
+            voltage_mv / 1000,
+        )
+        self.update_attribute(
+            self.AttributeDefs.battery_percentage.id,
+            self._battery_percentage_with_hysteresis(voltage_mv),
+        )
+
+    def _battery_percentage_from_voltage(self, voltage_mv: int) -> int:
+        """Estimate coarse CR1632 battery percentage from voltage."""
+        for threshold_mv, battery_percentage in self.BATTERY_PERCENTAGE_THRESHOLDS_MV:
+            if voltage_mv >= threshold_mv:
+                return battery_percentage
+
+        return 0
+
+    def _battery_percentage_with_hysteresis(self, voltage_mv: int) -> int:
+        """Estimate coarse battery percentage with two-way hysteresis."""
+        new_percentage = self._battery_percentage_from_voltage(voltage_mv)
+        cached_percentage = self.get(
+            self.AttributeDefs.battery_percentage.id,
+        )
+
+        if cached_percentage is None or new_percentage == cached_percentage:
+            return new_percentage
+
+        if new_percentage < cached_percentage:
+            voltage_mv += self.BATTERY_HYSTERESIS_MV
+        else:
+            voltage_mv -= self.BATTERY_HYSTERESIS_MV
+
+        return self._battery_percentage_from_voltage(voltage_mv)
 
 
 class AqaraE1ManufacturerCluster(CustomCluster):
@@ -30,7 +105,7 @@ class AqaraE1ManufacturerCluster(CustomCluster):
     BATTERY_VOLTAGE_TAG: Final = 0x01
 
     class AttributeDefs(BaseAttributeDefs):
-        """Aqara E1 manufacturer attributes."""
+        """Attribute definitions."""
 
         aqara_lifeline: Final = ZCLAttributeDef(
             id=0x00F7,
@@ -40,22 +115,27 @@ class AqaraE1ManufacturerCluster(CustomCluster):
         )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialize manufacturer cluster and subscribe to lifeline reports."""
+        """Initialize the Aqara manufacturer cluster."""
         super().__init__(*args, **kwargs)
-        self.on_event(AttributeReportedEvent.event_type, self._handle_attribute_event)
+        self.on_event(
+            AttributeReportedEvent.event_type,
+            self._handle_attribute_event,
+        )
 
-    def _handle_attribute_event(self, event: AttributeReportedEvent) -> None:
-        """Handle Aqara lifeline reports."""
+    def _handle_attribute_event(
+        self,
+        event: AttributeReportedEvent,
+    ) -> None:
+        """Handle the Aqara lifeline attribute."""
         if event.attribute_id == self.AttributeDefs.aqara_lifeline.id:
             values = self._parse_lifeline_report(event.value)
+            lifeline_cluster = self.endpoint.aqara_e1_lifeline
 
             if self.BATTERY_VOLTAGE_TAG in values:
-                self.endpoint.power.update_from_voltage(
-                    values[self.BATTERY_VOLTAGE_TAG]
-                )
+                lifeline_cluster.update_from_voltage(values[self.BATTERY_VOLTAGE_TAG])
 
     def _parse_lifeline_report(self, data: bytes) -> dict[int, Any]:
-        """Parse Aqara E1 lifeline report."""
+        """Parse the Aqara lifeline report."""
         values: dict[int, Any] = {}
 
         while len(data) >= 2:
@@ -76,88 +156,36 @@ class AqaraE1ManufacturerCluster(CustomCluster):
         return values
 
 
-class AqaraE1PowerConfigurationCluster(LocalDataCluster, PowerConfiguration):
-    """Power cluster with coarse voltage-based battery percentage estimation."""
-
-    BATTERY_VOLTAGE_ATTR_ID: Final = PowerConfiguration.AttributeDefs.battery_voltage.id
-    BATTERY_PERCENTAGE_REMAINING_ATTR_ID: Final = (
-        PowerConfiguration.AttributeDefs.battery_percentage_remaining.id
-    )
-    BATTERY_QUANTITY_ATTR_ID: Final = (
-        PowerConfiguration.AttributeDefs.battery_quantity.id
-    )
-    BATTERY_SIZE_ATTR_ID: Final = PowerConfiguration.AttributeDefs.battery_size.id
-
-    BATTERY_HYSTERESIS_MV: Final = 10
-
-    BATTERY_PERCENTAGE_THRESHOLDS_MV: Final = (
-        (2870, 200),
-        (2840, 100),
-        (2810, 50),
-        (2790, 10),
-    )
-
-    _VALID_ATTRIBUTES: set[int] = {
-        BATTERY_VOLTAGE_ATTR_ID,
-        BATTERY_PERCENTAGE_REMAINING_ATTR_ID,
-    }
-
-    _CONSTANT_ATTRIBUTES: dict[int, Any] = {
-        BATTERY_QUANTITY_ATTR_ID: 1,
-        BATTERY_SIZE_ATTR_ID: BatterySize.CR1632,
-    }
-
-    def update_from_voltage(self, voltage_mv: int) -> None:
-        """Update battery voltage and estimated battery percentage."""
-        self._update_attribute(
-            self.BATTERY_VOLTAGE_ATTR_ID,
-            round(voltage_mv / 100, 1),
-        )
-        self._update_attribute(
-            self.BATTERY_PERCENTAGE_REMAINING_ATTR_ID,
-            self._battery_percentage_with_hysteresis(voltage_mv),
-        )
-
-    def _battery_percentage_from_voltage(self, voltage_mv: int) -> int:
-        """Estimate coarse CR battery percentage from voltage."""
-        for threshold_mv, battery_percentage in self.BATTERY_PERCENTAGE_THRESHOLDS_MV:
-            if voltage_mv >= threshold_mv:
-                return battery_percentage
-
-        return 0
-
-    def _battery_percentage_with_hysteresis(self, voltage_mv: int) -> int:
-        """Estimate coarse CR battery percentage with two-way hysteresis."""
-        new_percentage = self._battery_percentage_from_voltage(voltage_mv)
-
-        cached_percentage = self.get(self.BATTERY_PERCENTAGE_REMAINING_ATTR_ID)
-        if cached_percentage is None or new_percentage == cached_percentage:
-            return new_percentage
-
-        if new_percentage < cached_percentage:
-            voltage_mv += self.BATTERY_HYSTERESIS_MV
-        else:
-            voltage_mv -= self.BATTERY_HYSTERESIS_MV
-
-        return self._battery_percentage_from_voltage(voltage_mv)
-
-
 (
     QuirkBuilder("LUMI", "lumi.magnet.acn001")
     .friendly_name(manufacturer="Aqara", model="Door and Window Sensor E1")
-    .replaces(AqaraE1PowerConfigurationCluster, endpoint_id=1)
-    .replaces(AqaraE1ManufacturerCluster, endpoint_id=1)
-    .removes(Ota.cluster_id, endpoint_id=1, cluster_type=ClusterType.Client)
+    .replaces(AqaraE1ManufacturerCluster)
+    .removes(PowerConfiguration.cluster_id)
+    .adds(AqaraE1LifelineCluster)
+    .removes(
+        Ota.cluster_id,
+        cluster_type=ClusterType.Client,
+    )
+    .sensor(
+        attribute_name="battery_percentage",
+        cluster_id=AqaraE1LifelineCluster.cluster_id,
+        entity_type=EntityType.DIAGNOSTIC,
+        device_class=SensorDeviceClass.BATTERY,
+        state_class=SensorStateClass.MEASUREMENT,
+        unit=PERCENTAGE,
+        suggested_display_precision=0,
+        translation_key="battery",
+        fallback_name="Battery",
+    )
     .sensor(
         attribute_name="battery_voltage",
-        cluster_id=AqaraE1PowerConfigurationCluster.cluster_id,
+        cluster_id=AqaraE1LifelineCluster.cluster_id,
+        entity_type=EntityType.DIAGNOSTIC,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         unit=UnitOfElectricPotential.VOLT,
-        multiplier=0.1,
-        suggested_display_precision=2,
-        entity_type=EntityType.DIAGNOSTIC,
         initially_disabled=True,
+        suggested_display_precision=3,
         translation_key="battery_voltage",
         fallback_name="Battery voltage",
     )
