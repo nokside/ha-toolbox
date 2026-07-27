@@ -1,7 +1,7 @@
 """Quirk v2 for Aqara Wall Outlet H2 EU lumi.plug.aeu001 / WP-P01D."""
 
-from collections.abc import Iterator
 import struct
+from collections.abc import Iterator
 from typing import Any, Final
 
 from zha.application.helpers import safe_read, write_attributes_safe
@@ -50,38 +50,6 @@ class PowerOnBehavior(t.enum8):
     Previous = 1
     Off = 2
     Inverted = 3
-
-
-class AqaraH2EUOutletAnalogInputCluster(CustomCluster, AnalogInput):
-    """Relay endpoint 21 power values to the local cluster."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialize the cluster."""
-        super().__init__(*args, **kwargs)
-
-        self.on_event(
-            AttributeReadEvent.event_type,
-            self._handle_attribute_event,
-        )
-        self.on_event(
-            AttributeReportedEvent.event_type,
-            self._handle_attribute_event,
-        )
-
-    def _handle_attribute_event(
-        self,
-        event: AttributeReadEvent | AttributeReportedEvent,
-    ) -> None:
-        """Relay read or reported power to the local cluster."""
-        if (
-            event.attribute_id == self.AttributeDefs.present_value.id
-            and event.value is not None
-            and event.value >= 0
-        ):
-            self.endpoint.device.endpoints[1].aqara_h2eu_outlet_local.update_attribute(
-                AqaraH2EUOutletLocalCluster.AttributeDefs.power.id,
-                float(event.value),
-            )
 
 
 class AqaraH2EUOutletManufacturerCluster(CustomCluster):
@@ -161,30 +129,30 @@ class AqaraH2EUOutletManufacturerCluster(CustomCluster):
         """Handle the Aqara lifeline attribute."""
         if event.attribute_id == self.AttributeDefs.aqara_lifeline.id:
             values = self._parse_lifeline_report(event.value)
-            local_cluster = self.endpoint.aqara_h2eu_outlet_local
+            lifeline_cluster = self.endpoint.aqara_h2eu_outlet_lifeline
 
             if self.DEVICE_TEMPERATURE_TAG in values:
-                local_cluster.update_attribute(
-                    AqaraH2EUOutletLocalCluster.AttributeDefs.device_temperature.id,
-                    float(values[self.DEVICE_TEMPERATURE_TAG]),
+                lifeline_cluster.update_attribute(
+                    AqaraH2EUOutletLifelineCluster.AttributeDefs.device_temperature.id,
+                    values[self.DEVICE_TEMPERATURE_TAG],
                 )
 
             if self.ENERGY_TAG in values:
-                local_cluster.update_attribute(
-                    AqaraH2EUOutletLocalCluster.AttributeDefs.energy.id,
-                    float(values[self.ENERGY_TAG]),
+                lifeline_cluster.update_attribute(
+                    AqaraH2EUOutletLifelineCluster.AttributeDefs.energy.id,
+                    values[self.ENERGY_TAG],
                 )
 
             if self.VOLTAGE_TAG in values:
-                local_cluster.update_attribute(
-                    AqaraH2EUOutletLocalCluster.AttributeDefs.voltage.id,
-                    float(values[self.VOLTAGE_TAG]) / 10,
+                lifeline_cluster.update_attribute(
+                    AqaraH2EUOutletLifelineCluster.AttributeDefs.voltage.id,
+                    values[self.VOLTAGE_TAG] / 10,
                 )
 
             if self.CURRENT_TAG in values:
-                local_cluster.update_attribute(
-                    AqaraH2EUOutletLocalCluster.AttributeDefs.current.id,
-                    float(values[self.CURRENT_TAG]) / 1000,
+                lifeline_cluster.update_attribute(
+                    AqaraH2EUOutletLifelineCluster.AttributeDefs.current.id,
+                    values[self.CURRENT_TAG] / 1000,
                 )
 
     async def apply_custom_configuration(
@@ -223,20 +191,15 @@ class AqaraH2EUOutletManufacturerCluster(CustomCluster):
         return values
 
 
-class AqaraH2EUOutletLocalCluster(LocalDataCluster):
-    """Local values decoded from Aqara reports."""
+class AqaraH2EUOutletLifelineCluster(LocalDataCluster):
+    """Values decoded from the Aqara lifeline."""
 
     cluster_id = 0xFC02
-    ep_attribute = "aqara_h2eu_outlet_local"
+    ep_attribute = "aqara_h2eu_outlet_lifeline"
 
     class AttributeDefs(BaseAttributeDefs):
         """Attribute definitions."""
 
-        power: Final = ZCLAttributeDef(
-            id=0x0000,
-            type=t.Single,
-            manufacturer_code=None,
-        )
         current: Final = ZCLAttributeDef(
             id=0x0001,
             type=t.Single,
@@ -254,12 +217,11 @@ class AqaraH2EUOutletLocalCluster(LocalDataCluster):
         )
         device_temperature: Final = ZCLAttributeDef(
             id=0x0004,
-            type=t.Single,
+            type=t.int8s,
             manufacturer_code=None,
         )
 
-    _VALID_ATTRIBUTES = {
-        AttributeDefs.power.id,
+    _VALID_ATTRIBUTES: set[int] = {
         AttributeDefs.current.id,
         AttributeDefs.voltage.id,
         AttributeDefs.energy.id,
@@ -270,7 +232,9 @@ class AqaraH2EUOutletLocalCluster(LocalDataCluster):
 class AqaraH2EUOutletChargingLimitNumber(BaseNumber):
     """Charging limit number supporting floating-point values."""
 
-    _attribute_name = AqaraH2EUOutletManufacturerCluster.AttributeDefs.charging_limit.name
+    _attribute_name = (
+        AqaraH2EUOutletManufacturerCluster.AttributeDefs.charging_limit.name
+    )
     _attr_native_min_value: float = 0.1
     _attr_native_max_value: float = 2.0
     _attr_native_step: float = 0.1
@@ -380,8 +344,7 @@ class AqaraH2EUOutletDevice(QuirkV2Device):
     # Remove the incomplete Electrical Measurement cluster.
     .removes(ElectricalMeasurement.cluster_id)
     .replaces(AqaraH2EUOutletManufacturerCluster)
-    .replaces(AqaraH2EUOutletAnalogInputCluster, endpoint_id=21)
-    .adds(AqaraH2EUOutletLocalCluster)
+    .adds(AqaraH2EUOutletLifelineCluster)
     .switch(
         attribute_name="button_lock",
         cluster_id=AqaraH2EUOutletManufacturerCluster.cluster_id,
@@ -420,8 +383,9 @@ class AqaraH2EUOutletDevice(QuirkV2Device):
         fallback_name="Charging protection",
     )
     .sensor(
-        attribute_name="power",
-        cluster_id=AqaraH2EUOutletLocalCluster.cluster_id,
+        attribute_name="present_value",
+        cluster_id=AnalogInput.cluster_id,
+        endpoint_id=21,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
         unit=UnitOfPower.WATT,
@@ -431,7 +395,7 @@ class AqaraH2EUOutletDevice(QuirkV2Device):
     )
     .sensor(
         attribute_name="current",
-        cluster_id=AqaraH2EUOutletLocalCluster.cluster_id,
+        cluster_id=AqaraH2EUOutletLifelineCluster.cluster_id,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
         unit=UnitOfElectricCurrent.AMPERE,
@@ -441,7 +405,7 @@ class AqaraH2EUOutletDevice(QuirkV2Device):
     )
     .sensor(
         attribute_name="voltage",
-        cluster_id=AqaraH2EUOutletLocalCluster.cluster_id,
+        cluster_id=AqaraH2EUOutletLifelineCluster.cluster_id,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         unit=UnitOfElectricPotential.VOLT,
@@ -451,7 +415,7 @@ class AqaraH2EUOutletDevice(QuirkV2Device):
     )
     .sensor(
         attribute_name="energy",
-        cluster_id=AqaraH2EUOutletLocalCluster.cluster_id,
+        cluster_id=AqaraH2EUOutletLifelineCluster.cluster_id,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
         unit=UnitOfEnergy.KILO_WATT_HOUR,
@@ -461,7 +425,7 @@ class AqaraH2EUOutletDevice(QuirkV2Device):
     )
     .sensor(
         attribute_name="device_temperature",
-        cluster_id=AqaraH2EUOutletLocalCluster.cluster_id,
+        cluster_id=AqaraH2EUOutletLifelineCluster.cluster_id,
         entity_type=EntityType.DIAGNOSTIC,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
