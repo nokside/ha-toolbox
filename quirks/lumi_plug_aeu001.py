@@ -114,17 +114,13 @@ class AqaraH2EUOutletManufacturerCluster(CustomCluster):
         """Initialize the Aqara manufacturer cluster."""
         super().__init__(*args, **kwargs)
         self.on_event(
-            AttributeReadEvent.event_type,
-            self._handle_attribute_event,
-        )
-        self.on_event(
             AttributeReportedEvent.event_type,
             self._handle_attribute_event,
         )
 
     def _handle_attribute_event(
         self,
-        event: AttributeReadEvent | AttributeReportedEvent,
+        event: AttributeReportedEvent,
     ) -> None:
         """Handle the Aqara lifeline attribute."""
         if event.attribute_id == self.AttributeDefs.aqara_lifeline.id:
@@ -154,20 +150,6 @@ class AqaraH2EUOutletManufacturerCluster(CustomCluster):
                     AqaraH2EUOutletLifelineCluster.AttributeDefs.current.id,
                     values[self.CURRENT_TAG] / 1000,
                 )
-
-    async def apply_custom_configuration(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        """Read the Aqara lifeline during device configuration."""
-        try:
-            await self.read_attributes(
-                [self.AttributeDefs.aqara_lifeline.name],
-                allow_cache=False,
-            )
-        except Exception as exc:
-            self.debug("Failed to read Aqara lifeline: %r", exc)
 
     def _parse_lifeline_report(self, data: bytes) -> dict[int, Any]:
         """Parse an Aqara lifeline report."""
