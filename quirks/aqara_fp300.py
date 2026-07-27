@@ -42,7 +42,6 @@ from zigpy.zcl import (
 from zigpy.zcl.clusters.general import PowerConfiguration
 from zigpy.zcl.foundation import BaseAttributeDefs, DataTypeId, ZCLAttributeDef
 
-
 AQARA_MFG_CODE: Final = 0x115F
 
 
@@ -72,69 +71,30 @@ class ReportMode(t.enum8):
     Threshold_and_interval = 3
 
 
-class FP300PowerConfigurationCluster(PowerConfiguration, LocalDataCluster):
-    """FP300 power cluster with filtered standard battery reports."""
+class AqaraFP300LifelineCluster(LocalDataCluster):
+    """Values decoded from the Aqara lifeline."""
 
-    BATTERY_VOLTAGE_ATTR_ID: Final = PowerConfiguration.AttributeDefs.battery_voltage.id
-    BATTERY_PERCENTAGE_REMAINING_ATTR_ID: Final = (
-        PowerConfiguration.AttributeDefs.battery_percentage_remaining.id
-    )
-    BATTERY_QUANTITY_ATTR_ID: Final = (
-        PowerConfiguration.AttributeDefs.battery_quantity.id
-    )
-    BATTERY_SIZE_ATTR_ID: Final = PowerConfiguration.AttributeDefs.battery_size.id
+    cluster_id = 0xFC02
+    ep_attribute = "aqara_fp300_lifeline"
+
+    class AttributeDefs(BaseAttributeDefs):
+        """Attribute definitions."""
+
+        battery_percentage: Final = ZCLAttributeDef(
+            id=0x0000,
+            type=t.uint8_t,
+            manufacturer_code=None,
+        )
+        battery_voltage: Final = ZCLAttributeDef(
+            id=0x0001,
+            type=t.Single,
+            manufacturer_code=None,
+        )
 
     _VALID_ATTRIBUTES: set[int] = {
-        BATTERY_VOLTAGE_ATTR_ID,
-        BATTERY_PERCENTAGE_REMAINING_ATTR_ID,
+        AttributeDefs.battery_percentage.id,
+        AttributeDefs.battery_voltage.id,
     }
-
-    _CONSTANT_ATTRIBUTES: dict[int, Any] = {
-        BATTERY_QUANTITY_ATTR_ID: 2,
-        BATTERY_SIZE_ATTR_ID: PowerConfiguration.BatterySize.Other,
-    }
-
-    def battery_voltage_reported(self, value: int) -> None:
-        """Update battery voltage from Aqara millivolt report."""
-        self._update_attribute(
-            self.BATTERY_VOLTAGE_ATTR_ID,
-            round(value / 100, 1),
-        )
-
-    def battery_percentage_reported(self, value: int) -> None:
-        """Update battery percentage from Aqara 0-100 report."""
-        if not 0 <= value <= 100:
-            self.debug("Ignoring invalid FP300 battery percentage: %s", value)
-            return
-
-        self._update_attribute(
-            self.BATTERY_PERCENTAGE_REMAINING_ATTR_ID,
-            value * 2,
-        )
-
-    def handle_cluster_general_request(
-        self,
-        hdr: foundation.ZCLHeader,
-        args: list[Any],
-        *,
-        dst_addressing: t.AddrMode | None = None,
-    ) -> None:
-        """Filter out standard battery reports."""
-        if hdr.command_id == foundation.GeneralCommand.Report_Attributes:
-            args.attribute_reports = [
-                attr
-                for attr in args.attribute_reports
-                if attr.attrid not in self._VALID_ATTRIBUTES
-            ]
-
-            if not args.attribute_reports:
-                return
-
-        super().handle_cluster_general_request(
-            hdr,
-            args,
-            dst_addressing=dst_addressing,
-        )
 
 
 class AqaraFP300ManufacturerCluster(CustomCluster):
@@ -342,33 +302,31 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the FP300 manufacturer cluster."""
         super().__init__(*args, **kwargs)
-
-        for event_type in (
-            AttributeReadEvent,
-            AttributeReportedEvent,
-        ):
-            self.on_event(
-                event_type.event_type,
-                self._handle_attribute_event,
-            )
+        self.on_event(
+            AttributeReportedEvent.event_type,
+            self._handle_attribute_event,
+        )
 
     def _handle_attribute_event(
         self,
-        event: AttributeReadEvent | AttributeReportedEvent,
+        event: AttributeReportedEvent,
     ) -> None:
         """Handle the Aqara lifeline attribute."""
-        attrid = event.attribute_id
-        value = event.value
-
-        if attrid == self.AttributeDefs.aqara_lifeline.id:
-            values = self._parse_lifeline_report(value)
-            power = self.endpoint.power
-
-            if self.BATTERY_VOLTAGE_TAG in values:
-                power.battery_voltage_reported(values[self.BATTERY_VOLTAGE_TAG])
+        if event.attribute_id == self.AttributeDefs.aqara_lifeline.id:
+            values = self._parse_lifeline_report(event.value)
+            lifeline_cluster = self.endpoint.aqara_fp300_lifeline
 
             if self.BATTERY_PERCENTAGE_TAG in values:
-                power.battery_percentage_reported(values[self.BATTERY_PERCENTAGE_TAG])
+                lifeline_cluster.update_attribute(
+                    AqaraFP300LifelineCluster.AttributeDefs.battery_percentage.id,
+                    values[self.BATTERY_PERCENTAGE_TAG],
+                )
+
+            if self.BATTERY_VOLTAGE_TAG in values:
+                lifeline_cluster.update_attribute(
+                    AqaraFP300LifelineCluster.AttributeDefs.battery_voltage.id,
+                    values[self.BATTERY_VOLTAGE_TAG] / 1000,
+                )
 
     def _parse_lifeline_report(self, data: bytes) -> dict[int, Any]:
         """Parse FP300 lifeline report."""
@@ -408,7 +366,7 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """Apply FP300 custom configuration and read the Aqara lifeline."""
+        """Apply FP300 custom configuration."""
         # 0x00FF is accepted by FP300, possibly part of Aqara init,
         # but no proven functional effect yet.
         try:
@@ -419,14 +377,6 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
             )
         except Exception as exc:
             self.debug("Failed to write init token: %r", exc)
-
-        try:
-            await self.read_attributes(
-                [self.AttributeDefs.aqara_lifeline.name],
-                allow_cache=False,
-            )
-        except Exception as exc:
-            self.debug("Failed to read Aqara lifeline: %r", exc)
 
 
 class FP300DetectionRangeNumber(BaseNumber):
@@ -691,7 +641,8 @@ class AqaraFP300Device(QuirkV2Device):
     .friendly_name(manufacturer="Aqara", model="Presence Multi-Sensor FP300")
     .zha_device_class(AqaraFP300Device)
     .replaces(AqaraFP300ManufacturerCluster)
-    .replaces(FP300PowerConfigurationCluster)
+    .removes(PowerConfiguration.cluster_id)
+    .adds(AqaraFP300LifelineCluster)
     .binary_sensor(
         attribute_name="presence",
         cluster_id=AqaraFP300ManufacturerCluster.cluster_id,
@@ -936,14 +887,25 @@ class AqaraFP300Device(QuirkV2Device):
         fallback_name="PIR detection",
     )
     .sensor(
+        attribute_name="battery_percentage",
+        cluster_id=AqaraFP300LifelineCluster.cluster_id,
+        entity_type=EntityType.DIAGNOSTIC,
+        device_class=SensorDeviceClass.BATTERY,
+        state_class=SensorStateClass.MEASUREMENT,
+        unit=PERCENTAGE,
+        suggested_display_precision=0,
+        translation_key="battery",
+        fallback_name="Battery",
+    )
+    .sensor(
         attribute_name="battery_voltage",
-        cluster_id=FP300PowerConfigurationCluster.cluster_id,
+        cluster_id=AqaraFP300LifelineCluster.cluster_id,
+        entity_type=EntityType.DIAGNOSTIC,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         unit=UnitOfElectricPotential.VOLT,
-        multiplier=0.1,
-        entity_type=EntityType.DIAGNOSTIC,
         initially_disabled=True,
+        suggested_display_precision=3,
         translation_key="battery_voltage",
         fallback_name="Battery voltage",
     )
