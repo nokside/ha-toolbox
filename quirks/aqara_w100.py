@@ -14,9 +14,10 @@ button 10 times to restore the W100 to factory default settings.
 
 Fan mode Off is a virtual state that hides the fan indicator on the W100
 display; it is not a native W100 fan mode.
+
+Requires Home Assistant 2026.8.0 or later.
 """
 
-import functools
 import struct
 import time
 
@@ -25,7 +26,7 @@ from typing import Any, Final
 
 from zha.application.helpers import safe_read
 from zha.application.platforms import BaseEntity, EntityCategory, PlatformEntity
-from zha.application.platforms.climate import BaseThermostat, ThermostatEntityInfo
+from zha.application.platforms.climate import BaseThermostat
 from zha.application.platforms.climate.const import (
     ClimateEntityFeature,
     FAN_AUTO,
@@ -48,6 +49,8 @@ from zhaquirks.builder import (
     NumberDeviceClass,
     PERCENTAGE,
     QuirkBuilder,
+    SensorDeviceClass,
+    SensorStateClass,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -110,15 +113,24 @@ class TempHumidityStatus(t.enum8):
     Low = 2
 
 
-class W100PowerConfigurationCluster(PowerConfiguration, LocalDataCluster):
-    """W100 power cluster."""
+class W100LifelineCluster(LocalDataCluster):
+    """Values decoded from the Aqara lifeline."""
 
-    def battery_percent_reported(self, value: int) -> None:
-        """Update battery percentage from a 0-100 report."""
-        self._update_attribute(
-            self.AttributeDefs.battery_percentage_remaining.id,
-            max(0, min(100, value)) * 2,
+    cluster_id = 0xFCF4
+    ep_attribute = "w100_lifeline"
+
+    class AttributeDefs(BaseAttributeDefs):
+        """Attribute definitions."""
+
+        battery_percentage: Final = ZCLAttributeDef(
+            id=0x0000,
+            type=t.uint8_t,
+            manufacturer_code=None,
         )
+
+    _VALID_ATTRIBUTES: set[int] = {
+        AttributeDefs.battery_percentage.id,
+    }
 
 
 class W100CommandRawCodec:
@@ -295,8 +307,8 @@ class W100CommandRawCodec:
 
         return [humidity_command, temperature_command]
 
-    @classmethod
-    def _build_frame_header(cls, payload_len: int, action: int) -> bytes:
+    @staticmethod
+    def _build_frame_header(payload_len: int, action: int) -> bytes:
         """Build a W100-style command_raw frame header."""
         prefix = [0xAA, 0x71, payload_len + 3, 0x44, 0x00]
         checksum = (-sum(prefix)) & 0xFF
@@ -451,8 +463,9 @@ class W100ManuCluster(CustomCluster):
             values = self._parse_lifeline_report(event.value)
 
             if self.BATTERY_PERCENTAGE_TAG in values:
-                self.endpoint.power.battery_percent_reported(
-                    values[self.BATTERY_PERCENTAGE_TAG]
+                self.endpoint.w100_lifeline.update_attribute(
+                    W100LifelineCluster.AttributeDefs.battery_percentage.id,
+                    max(0, min(100, values[self.BATTERY_PERCENTAGE_TAG])),
                 )
 
     async def _handle_command_raw_report(self, payload: bytes) -> None:
@@ -567,7 +580,7 @@ class W100ManuCluster(CustomCluster):
 
             try:
                 typed_value, data = foundation.TypeValue.deserialize(data[1:])
-            except ValueError:
+            except (KeyError, ValueError):
                 self.debug(
                     "Failed to deserialize W100 lifeline tag 0x%02X from %r",
                     tag,
@@ -1052,19 +1065,6 @@ class W100ClimateEntity(BaseThermostat):
         """Handle W100 thermostat or temperature update."""
         self.maybe_emit_state_changed_event()
 
-    @functools.cached_property
-    def info_object(self) -> ThermostatEntityInfo:
-        """Return a representation of the thermostat."""
-        return ThermostatEntityInfo(
-            **super().info_object.__dict__,
-            max_temp=self.max_temp,
-            min_temp=self.min_temp,
-            supported_features=self.supported_features,
-            fan_modes=self.fan_modes,
-            preset_modes=self.preset_modes,
-            hvac_modes=self.hvac_modes,
-        )
-
     @property
     def available(self) -> bool:
         """Return entity availability."""
@@ -1322,7 +1322,8 @@ class W100ZhaDevice(QuirkV2Device):
 (
     QuirkBuilder("Aqara", "lumi.sensor_ht.agl001")
     .friendly_name(manufacturer="Aqara", model="Climate Sensor W100")
-    .replaces(W100PowerConfigurationCluster, endpoint_id=1)
+    .removes(PowerConfiguration.cluster_id, endpoint_id=1)
+    .adds(W100LifelineCluster, endpoint_id=1)
     .replaces(W100ManuCluster, endpoint_id=1)
     .replaces(W100ButtonCluster, endpoint_id=1)
     .replaces(W100ButtonCluster, endpoint_id=2)
@@ -1331,6 +1332,17 @@ class W100ZhaDevice(QuirkV2Device):
     .adds(W100ThermostatCluster, endpoint_id=1)
     .adds(W100ExternalSensorCluster, endpoint_id=1)
     .zha_device_class(W100ZhaDevice)
+    .sensor(
+        attribute_name="battery_percentage",
+        cluster_id=W100LifelineCluster.cluster_id,
+        entity_type=EntityType.DIAGNOSTIC,
+        device_class=SensorDeviceClass.BATTERY,
+        state_class=SensorStateClass.MEASUREMENT,
+        unit=PERCENTAGE,
+        suggested_display_precision=0,
+        translation_key="battery",
+        fallback_name="Battery",
+    )
     .switch(
         attribute_name="thermostat_line_auto_hide",
         cluster_id=W100ManuCluster.cluster_id,
