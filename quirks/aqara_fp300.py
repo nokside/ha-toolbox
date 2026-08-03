@@ -1,6 +1,8 @@
-"""Quirk for Aqara Presence Multi-Sensor FP300 lumi.sensor_occupy.agl8."""
+"""Quirk for Aqara Presence Multi-Sensor FP300 lumi.sensor_occupy.agl8.
 
-import functools
+Requires Home Assistant 2026.8.0 or later.
+"""
+
 import random
 
 from collections.abc import Iterator
@@ -15,7 +17,7 @@ from zha.application.platforms import (
 )
 from zha.application.platforms.number import BaseNumber
 from zha.application.platforms.number.const import NumberMode
-from zha.application.platforms.select import BaseSelectEntity, EnumSelectInfo
+from zha.application.platforms.select import BaseSelectEntity, EnumSelectState
 from zhaquirks import CustomCluster, LocalDataCluster
 from zhaquirks.builder import (
     PERCENTAGE,
@@ -337,7 +339,7 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
 
             try:
                 typed_value, data = foundation.TypeValue.deserialize(data[1:])
-            except ValueError:
+            except (KeyError, ValueError):
                 self.debug(
                     "Failed to deserialize FP300 lifeline tag 0x%02X from %r",
                     tag,
@@ -420,7 +422,7 @@ class FP300DetectionRangeNumber(BaseNumber):
 
     def handle_attribute_updated(
         self,
-        event: (AttributeReadEvent | AttributeReportedEvent | AttributeWrittenEvent),
+        event: AttributeReadEvent | AttributeReportedEvent | AttributeWrittenEvent,
     ) -> None:
         """Handle detection_range_raw value updates."""
         if event.attribute_name == self._attribute_name:
@@ -429,11 +431,11 @@ class FP300DetectionRangeNumber(BaseNumber):
     @classmethod
     def _decode(cls, raw: bytes) -> float | None:
         """Decode raw detection range value into meters."""
-        if len(raw) != 5:
-            return None
-
-        mask = int.from_bytes(raw[2:5], "little")
-        return mask.bit_length() * cls._attr_native_step
+        if len(raw) == 5:
+            mask = int.from_bytes(raw[2:5], "little")
+            return mask.bit_length() * cls._attr_native_step
+    
+        return None
 
     @classmethod
     def _encode(cls, value: float) -> t.LVBytes:
@@ -528,16 +530,15 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
     def restore_external_state_attributes(
         self,
         *,
-        state: str | None = None,
-        **kwargs: Any,
+        state: str,
     ) -> None:
         """Do not restore select state outside the ZCL cache."""
 
-    @functools.cached_property
-    def info_object(self) -> EnumSelectInfo:
-        """Return a representation of the select."""
-        return EnumSelectInfo(
-            **super().info_object.__dict__,
+    @property
+    def state(self) -> EnumSelectState:
+        """Return the state of the select."""
+        return EnumSelectState(
+            **super().state.__dict__,
             enum="FP300LedIndicatorOffTime",
             options=self.options,
         )
@@ -861,7 +862,7 @@ class AqaraFP300Device(QuirkV2Device):
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
         unit=UnitOfLength.METERS,
-        multiplier=0.01,
+        divisor=100,
         entity_type=EntityType.DIAGNOSTIC,
         translation_key="target_distance",
         fallback_name="Target distance",
