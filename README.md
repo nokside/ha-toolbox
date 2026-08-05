@@ -18,6 +18,7 @@ A collection of custom resources for Home Assistant.
 | Blueprint | Import |
 | --- | --- |
 | Aqara W100 | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fnokside%2Fha-toolbox%2Fmain%2Fblueprints%2Fautomation%2Faqara_w100.yaml) |
+| Occupancy-based lighting | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fnokside%2Fha-toolbox%2Fmain%2Fblueprints%2Fautomation%2Foccupancy_based_lighting.yaml) |
 
 Or import manually:
 
