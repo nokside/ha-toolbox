@@ -1,5 +1,8 @@
 blueprint:
   name: "Occupancy-based lighting"
+  description: >-
+    Simple occupancy-based lighting control with optional door handling,
+    turn-on conditions, and turn-off blockers.
   domain: automation
   author: nokside
   source_url: https://raw.githubusercontent.com/nokside/ha-toolbox/main/blueprints/automation/occupancy_based_lighting.yaml
@@ -9,7 +12,7 @@ blueprint:
 
   input:
     light_targets:
-      name: Light
+      name: Lights
       selector:
         target:
           entity:
@@ -26,25 +29,23 @@ blueprint:
     off_delay:
       name: Off delay
       description: >-
-        Time to wait before turning off the light after occupancy clears.
+        Time to wait before turning off the lights after all occupancy sensors clear.
       default:
         minutes: 1
       selector:
         duration:
-    watchdog:
-      name: Turn-off watchdog
-      description: >
-        Automatically turns off lights that stay on for longer than the configured Off delay after turning on independently of occupancy.
-      default: true
-      selector:
-        boolean:
+
     optional_settings:
       name: Optional settings
       icon: mdi:cog
       collapsed: true
       input:
+
         door_targets:
           name: Doors
+          description: >-
+            Doors can turn on the lights and trigger turn-off checks, while turn-off
+            remains based on occupancy.
           default: {}
           selector:
             target:
@@ -55,7 +56,8 @@ blueprint:
         turn_on_conditions:
           name: Turn-on conditions
           description: >-
-            Conditions that must be met to turn on the light automatically. Leave empty or disable if unused.
+            Conditions that must be met for occupancy or a door to turn on the
+            lights. Leave empty or disable to allow turn-on without conditions.
           default:
             - condition: sun
               after: sunset
@@ -66,30 +68,21 @@ blueprint:
           selector:
             condition:
 
-        keep_on_entities:
-          name: Keep-on entities
-          description: Keeps the light on while any selected entity is on. The light will turn off if the keep-on timeout expires or all entities turn off.
+        turn_off_blockers:
+          name: Turn-off blockers
+          description: >-
+            Keep the lights on while any selected entity is on. Turn-off continues
+            automatically when no blockers remain.
           default: []
           selector:
             entity:
               multiple: true
 
-        keep_on_timeout:
-          name: Keep-on timeout
-          description: >-
-            Maximum time active keep-on entities can prevent the light
-            from turning off.
-          default:
-            hours: 1
-          selector:
-            duration:
-
 mode: queued
-max_exceeded: silent
 
 trigger_variables:
   door_targets: !input door_targets
-  keep_on_entities: !input keep_on_entities
+  turn_off_blockers: !input turn_off_blockers
 
 triggers:
 
@@ -100,14 +93,6 @@ triggers:
   options:
     behavior: first
 
-- alias: Door opened
-  trigger: door.opened
-  id: "on"
-  target: !input door_targets
-  options:
-    behavior: each
-  enabled: "{{ door_targets != {} }}"
-
 - alias: Occupancy cleared
   trigger: occupancy.cleared
   id: "off"
@@ -115,6 +100,14 @@ triggers:
   options:
     behavior: all
     for: !input off_delay
+
+- alias: Door opened
+  trigger: door.opened
+  id: "on"
+  target: !input door_targets
+  options:
+    behavior: each
+  enabled: "{{ door_targets != {} }}"
 
 - alias: Door left open
   trigger: door.opened
@@ -133,32 +126,12 @@ triggers:
     behavior: each
   enabled: "{{ door_targets != {} }}"
 
-- alias: Keep-on entity turned off
+- alias: Turn-off blocker cleared
   trigger: state
   id: "off"
-  entity_id: !input keep_on_entities
+  entity_id: !input turn_off_blockers
   to: "off"
-  enabled: "{{ keep_on_entities != [] }}"
-
-- alias: Keep-on timeout
-  trigger: state
-  id: "off"
-  entity_id: !input keep_on_entities
-  to: "on"
-  for: !input keep_on_timeout
-  enabled: "{{ keep_on_entities != [] }}"
-
-- alias: Light turned on
-  trigger: light.turned_on
-  id: "off"
-  target: !input light_targets
-  options:
-    behavior: first
-    for: !input off_delay
-  enabled: !input watchdog
-
-variables:
-  keep_on_entities: !input keep_on_entities
+  enabled: "{{ turn_off_blockers != [] }}"
 
 actions:
 - alias: Check if action is required
@@ -189,21 +162,19 @@ actions:
         behavior: all
         for: !input off_delay
 
+    - alias: Check turn-off blockers
+      condition: template
+      value_template: >-
+        {{
+          turn_off_blockers
+            | select('is_state', 'on')
+            | first is undefined
+        }}
+
     - condition: light.is_on
       target: !input light_targets
       options:
         behavior: any
-
-    - alias: Check keep-on entities
-      condition: or
-      conditions:
-      - condition: template
-        value_template: >-
-          {{ keep_on_entities | map('states') | select('in', ['on']) | first is undefined }}
-      - condition: state
-        entity_id: !input keep_on_entities
-        state: "on"
-        for: !input keep_on_timeout
 
 - alias: Set light state
   action: "light.turn_{{ trigger.id }}"
