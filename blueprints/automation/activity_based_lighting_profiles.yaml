@@ -1,0 +1,1314 @@
+blueprint:
+  name: "Activity-based lighting + Profiles"
+  description: |-
+    Automatically manages selected lights based on occupancy or motion, with
+    flexible lighting profiles and turn-off behavior.
+
+    Supports simple lighting setups as well as more advanced control using
+    profiles, conditions, blockers, and optional automation features.
+
+    **Features:**
+    - Custom lighting profiles based on time, sunrise, or sunset, with automatic updates while activity is detected and the lights remain on.
+    - Integration with Home Assistant Schedule for externally managed lighting profiles.
+    - Flexible turn-off blockers with custom entity states, configurable timing, and an optional timeout.
+    - Watchdog and recovery after Home Assistant restarts for lights that remain on unexpectedly.
+
+    **Note:** Future updates may require changes to existing automations created from this blueprint.
+  domain: automation
+  author: nokside
+  source_url: https://raw.githubusercontent.com/nokside/ha-toolbox/main/blueprints/automation/activity_based_lighting_profiles.yaml
+
+  homeassistant:
+    min_version: 2026.1.0
+
+  input:
+
+    light_entities:
+      name: Lights
+      selector:
+        entity:
+          filter:
+            - domain: light
+          multiple: true
+
+    activity_entities:
+      name: Occupancy / motion
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class: occupancy
+            - domain: binary_sensor
+              device_class: motion
+          multiple: true
+
+    off_delay:
+      name: Off delay
+      description: >-
+        Time to keep the lights unchanged after all occupancy and motion sensors clear.
+      default:
+        minutes: 1
+      selector:
+        duration:
+
+    transitions:
+      name: Lighting transitions
+      icon: mdi:transition
+      collapsed: true
+      input:
+
+        turn_on_transition:
+          name: Turn-on transition
+          default:
+            active_choice: Disabled
+            Enabled: 0
+          selector:
+            choose:
+              choices:
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+                Enabled:
+                  selector:
+                    number:
+                      min: 0
+                      max: 300
+                      step: 0.1
+                      unit_of_measurement: s
+
+        turn_off_transition:
+          name: Turn-off transition
+          default:
+            active_choice: Disabled
+            Enabled: 0
+          selector:
+            choose:
+              choices:
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+                Enabled:
+                  selector:
+                    number:
+                      min: 0
+                      max: 300
+                      step: 0.1
+                      unit_of_measurement: s
+
+    profiles:
+      name: Lighting profiles
+      icon: mdi:theme-light-dark
+      collapsed: true
+      input:
+
+        brightness:
+          name: Brightness
+          description: >-
+            Brightness used when Profiles are disabled.
+          default:
+            active_choice: Disabled
+            Enabled: 100
+          selector:
+            choose:
+              choices:
+
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Enabled:
+                  selector:
+                    number:
+                      min: 1
+                      max: 100
+                      step: 1
+                      unit_of_measurement: "%"
+                      mode: slider
+
+        color:
+          name: Color
+          description: >-
+            Color used when Profiles are disabled.
+          default:
+            active_choice: Disabled
+            Temperature: 4000
+            RGB:
+              - 255
+              - 255
+              - 255
+            RGBW:
+              - 255
+              - 255
+              - 255
+              - 255
+            RGBWW:
+              - 255
+              - 255
+              - 255
+              - 255
+              - 255
+          selector:
+            choose:
+              choices:
+
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Temperature:
+                  selector:
+                    number:
+                      min: 2000
+                      max: 6500
+                      step: 5
+                      unit_of_measurement: "kelvin"
+
+                RGB:
+                  selector:
+                    color_rgb:
+
+                RGBW:
+                  selector:
+                    object:
+
+                RGBWW:
+                  selector:
+                    object:
+
+        light_profiles:
+          name: Profiles
+          description: |-
+            **Schedule** supports the following parameters in **Additional data**:
+
+            - `brightness`
+            - `brightness_pct`
+            - `color_name`
+            - `color_temp_kelvin`
+            - `white`
+            - `effect`
+            - `flash`
+            - `profile`
+          default:
+            active_choice: Disabled
+            Custom:
+              - name: Sunrise
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Sunrise
+                  Sunrise:
+                    minutes: 0
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 50
+                color:
+                  active_choice: Temperature
+                  Temperature: 2700
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+              - name: Daytime
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Sunrise
+                  Sunrise:
+                    hours: 2
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 100
+                color:
+                  active_choice: Temperature
+                  Temperature: 4100
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+              - name: Sunset
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Sunset
+                  Sunset:
+                    minutes: 0
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 70
+                color:
+                  active_choice: Temperature
+                  Temperature: 3000
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+              - name: Night
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Time
+                  Time: "23:00:00"
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 20
+                color:
+                  active_choice: Temperature
+                  Temperature: 2200
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+          selector:
+            choose:
+              choices:
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Custom:
+                  selector:
+                    object:
+                      multiple: true
+                      label_field: name
+                      fields:
+
+                        name:
+                          label: Name
+                          required: true
+                          selector:
+                            text:
+
+                        days:
+                          label: Days of the week
+                          required: true
+                          selector:
+                            choose:
+                              choices:
+                                All days:
+                                  selector:
+                                    constant:
+                                      value: ""
+                                Custom:
+                                  selector:
+                                    select:
+                                      options:
+                                        - label: Monday
+                                          value: mon
+                                        - label: Tuesday
+                                          value: tue
+                                        - label: Wednesday
+                                          value: wed
+                                        - label: Thursday
+                                          value: thu
+                                        - label: Friday
+                                          value: fri
+                                        - label: Saturday
+                                          value: sat
+                                        - label: Sunday
+                                          value: sun
+                                      multiple: true
+                                      mode: list
+
+                        after:
+                          label: Start
+                          required: true
+                          selector:
+                            choose:
+                              choices:
+                                Time:
+                                  selector:
+                                    time:
+
+                                Sunrise:
+                                  selector:
+                                    duration:
+                                      allow_negative: true
+
+                                Sunset:
+                                  selector:
+                                    duration:
+                                      allow_negative: true
+
+                        brightness:
+                          label: Brightness
+                          required: true
+                          selector:
+                            choose:
+                              choices:
+                                Disabled:
+                                  selector:
+                                    constant:
+                                      value: ""
+                                Enabled:
+                                  selector:
+                                    number:
+                                      min: 1
+                                      max: 100
+                                      step: 1
+                                      unit_of_measurement: "%"
+                                      mode: slider
+
+                        color:
+                          label: Color
+                          required: true
+                          selector:
+                            choose:
+                              choices:
+                                Disabled:
+                                  selector:
+                                    constant:
+                                      value: ""
+                                Temperature:
+                                  selector:
+                                    number:
+                                      min: 2000
+                                      max: 6500
+                                      step: 5
+                                      unit_of_measurement: "kelvin"
+                                RGB:
+                                  selector:
+                                    color_rgb:
+                                RGBW:
+                                  selector:
+                                    object:
+                                RGBWW:
+                                  selector:
+                                    object:
+
+                Schedule:
+                  selector:
+                    entity:
+                      filter:
+                        - domain: schedule
+
+        auto_update:
+          name: Auto-update
+          description: >-
+            Automatically updates the lights when the active profile changes while
+            occupancy or motion is still detected and at least one selected light
+            remains on.
+          default: false
+          selector:
+            boolean:
+
+        auto_update_transition:
+          name: Auto-update transition
+          description: >-
+            Transition used when Auto-update applies a new profile.
+          default:
+            active_choice: Disabled
+            Enabled: 1
+          selector:
+            choose:
+              choices:
+
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Enabled:
+                  selector:
+                    number:
+                      min: 0
+                      max: 300
+                      step: 0.1
+                      unit_of_measurement: s
+
+    dimming:
+      name: Idle dimming
+      icon: mdi:brightness-6
+      collapsed: true
+      input:
+
+        idle_dimming:
+          name: Dim the light after the Off delay instead of turning it off immediately.
+          default: false
+          selector:
+            boolean:
+
+        idle_brightness:
+          name: Idle brightness
+          default:
+            active_choice: Disabled
+            Enabled: 10
+          selector:
+            choose:
+              choices:
+
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Enabled:
+                  selector:
+                    number:
+                      min: 1
+                      max: 100
+                      step: 1
+                      unit_of_measurement: "%"
+                      mode: slider
+
+        idle_color:
+          name: Idle color
+          default:
+            active_choice: Disabled
+            Temperature: 2200
+            RGB:
+              - 255
+              - 255
+              - 255
+            RGBW:
+              - 255
+              - 255
+              - 255
+              - 255
+            RGBWW:
+              - 255
+              - 255
+              - 255
+              - 255
+              - 255
+          selector:
+            choose:
+              choices:
+
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Temperature:
+                  selector:
+                    number:
+                      min: 2000
+                      max: 6500
+                      step: 5
+                      unit_of_measurement: "kelvin"
+
+                RGB:
+                  selector:
+                    color_rgb:
+
+                RGBW:
+                  selector:
+                    object:
+
+                RGBWW:
+                  selector:
+                    object:
+
+        idle_transition:
+          name: Idle transition
+          default:
+            active_choice: Disabled
+            Enabled: 1
+          selector:
+            choose:
+              choices:
+
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Enabled:
+                  selector:
+                    number:
+                      min: 0
+                      max: 300
+                      step: 0.1
+                      unit_of_measurement: s
+
+        idle_delay:
+          name: Idle duration
+          description: >-
+            How long to keep the lights dimmed before turning them off.
+          default:
+            minutes: 1
+          selector:
+            duration:
+
+    turn_on:
+      name: Turn-on conditions
+      icon: mdi:check-circle-outline
+      collapsed: true
+      input:
+
+        turn_on_conditions:
+          name: Conditions that must be met for occupancy, motion, or a door to turn on the light. Leave empty or disable to allow turn-on without conditions.
+          default:
+            - condition: sun
+              after: sunset
+              after_offset: "-00:30:00"
+              before: sunrise
+              before_offset: "00:30:00"
+              enabled: false
+          selector:
+            condition:
+
+    blockers:
+      name: Turn-off blockers
+      icon: mdi:shield-lock
+      collapsed: true
+      input:
+
+        off_blockers:
+          name: Blockers
+          description: >-
+            Pause the turn-off process while any configured entity is in its blocking
+            state. Turn-off continues automatically when no blockers remain.
+          default: []
+          selector:
+            object:
+              multiple: true
+              label_field: entity
+              description_field: state
+              fields:
+
+                entity:
+                  label: Entity
+                  required: true
+                  selector:
+                    entity:
+
+                state:
+                  label: Blocking state
+                  required: true
+                  selector:
+                    text:
+
+        off_blocker_timing:
+          name: Timing
+          description: >-
+            Choose when blockers pause the turn-off process.
+          default: before_turn_off
+          selector:
+            select:
+              options:
+                - label: Before idle dimming
+                  value: before_idle_dimming
+                - label: Before turn-off
+                  value: before_turn_off
+
+        off_blocker_timeout:
+          name: Timeout
+          description: >-
+            Maximum time to wait for blockers to clear before continuing the turn-off
+            process.
+          default:
+            active_choice: Disabled
+            Enabled:
+              hours: 1
+          selector:
+            choose:
+              choices:
+
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+
+                Enabled:
+                  selector:
+                    duration:
+
+    optional:
+      name: Optional settings
+      icon: mdi:cog
+      collapsed: true
+      input:
+
+        door_entities:
+          name: Doors
+          description: >-
+            Doors are only used for turn-on and do not keep the lights on.
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+                  device_class: door
+              multiple: true
+
+        watchdog:
+          name: Turn-off watchdog
+          description: >-
+            Starts the normal turn-off process when any selected light is on and no
+            occupancy or motion is detected. This also catches lights turned
+            on outside this automation or left on after a missed turn-off.
+            The normal Off delay, Idle dimming, and blockers still apply.
+            Note: You must restart Home Assistant once after creating this automation for the watchdog to work.
+          default: false
+          selector:
+            boolean:
+
+        ha_start:
+          name: Home Assistant startup
+          description: >-
+            Checks the lights when Home Assistant starts or restarts. If any selected
+            light is already on, the normal turn-off rules are applied.
+          default: false
+          selector:
+            boolean:
+
+mode: restart
+max_exceeded: silent
+
+trace:
+  stored_traces: 20
+
+trigger_variables:
+  door_entities: !input door_entities
+  light_entities: !input light_entities
+  activity_entities: !input activity_entities
+
+triggers:
+
+  - alias: Activity detected
+    id: "activity"
+    trigger: template
+    value_template: >-
+      {{
+        activity_entities
+          | select('is_state', 'on')
+          | first is defined
+      }}
+
+  - alias: Door opened
+    id: "activity"
+    trigger: state
+    entity_id: !input door_entities
+    to: "on"
+    enabled: "{{ door_entities != [] }}"
+
+  - alias: Turn-off watchdog
+    id: "watchdog"
+    trigger: template
+    value_template: >-
+      {{
+        light_entities
+          | select('is_state', 'on')
+          | first is defined
+        and
+        activity_entities
+          | select('is_state', 'on')
+          | first is undefined
+        and
+        state_attr(
+          this.entity_id if this else 'none',
+          'current'
+        ) | int(1) == 0
+      }}
+    enabled: !input watchdog
+
+  - alias: Home Assistant started
+    trigger: homeassistant
+    event: start
+    enabled: !input ha_start
+
+variables:
+  light_entities: !input light_entities
+  activity_entities: !input activity_entities
+  turn_on_transition: !input turn_on_transition
+  turn_off_transition: !input turn_off_transition
+  brightness: !input brightness
+  color: !input color
+  light_profiles: !input light_profiles
+  auto_update_transition: !input auto_update_transition
+  idle_transition: !input idle_transition
+  idle_brightness: !input idle_brightness
+  idle_color: !input idle_color
+  idle_delay: !input idle_delay
+  off_blockers: !input off_blockers
+  off_blocker_timing: !input off_blocker_timing
+  off_blocker_timeout: !input off_blocker_timeout
+  color_keys:
+    Temperature: color_temp_kelvin
+    RGB: rgb_color
+    RGBW: rgbw_color
+    RGBWW: rgbww_color
+  schedule_light_keys:
+    - brightness
+    - brightness_pct
+    - color_name
+    - color_temp_kelvin
+    - white
+    - flash
+    - effect
+    - profile
+
+conditions:
+
+  - alias: Prevent watchdog self-trigger
+    condition: template
+    value_template: >-
+      {{
+        trigger.id != 'watchdog'
+        or trigger.entity_id != this.entity_id
+      }}
+
+actions:
+
+  - alias: Check light availability
+    condition: template
+    value_template: >-
+      {{
+        light_entities
+          | select('has_value')
+          | first is defined
+      }}
+
+  - alias: Check activity availability
+    condition: template
+    value_template: >-
+      {{
+        activity_entities
+          | select('has_value')
+          | first is defined
+      }}
+
+  - alias: Turn on from activity
+    if:
+
+      - condition: trigger
+        id: "activity"
+
+    then:
+
+      - alias: Check turn-on permission
+        condition: or
+        conditions:
+
+          - condition: state
+            entity_id: !input light_entities
+            state: "on"
+            match: any
+
+          - condition: !input turn_on_conditions
+
+      - alias: Resolve light settings
+        variables:
+          light_data: >-
+            {% if light_profiles.active_choice == 'Schedule' %}
+              {% set schedule_data = {} %}
+
+              {% if is_state(light_profiles.Schedule, 'on') %}
+                {% set attrs =
+                  states[light_profiles.Schedule].attributes
+                %}
+                {% set schedule_data =
+                  dict(
+                    attrs.items()
+                      | selectattr('0', 'in', schedule_light_keys)
+                  )
+                %}
+              {% endif %}
+
+              {{
+                combine(
+                  {
+                    'transition': turn_on_transition.Enabled
+                  }
+                    if
+                      turn_on_transition.active_choice == 'Enabled'
+                    else {},
+                  schedule_data
+                )
+              }}
+
+            {% elif light_profiles.active_choice == 'Custom' %}
+              {% set current = now() %}
+              {% set weekdays = [
+                'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'
+              ] %}
+              {% set ns = namespace(
+                latest=none,
+                profile=none,
+                shift=0
+              ) %}
+
+              {% for profile in light_profiles.Custom %}
+                {% set type = profile.after.active_choice %}
+
+                {% if type == 'Time' %}
+                  {% set start = today_at(profile.after.Time) %}
+
+                {% else %}
+                  {% set event =
+                    'next_rising'
+                      if type == 'Sunrise'
+                      else 'next_setting'
+                  %}
+
+                  {% set event_time =
+                    as_local(
+                      as_datetime(state_attr('sun.sun', event))
+                    ).strftime('%H:%M:%S')
+                  %}
+
+                  {% set start =
+                    today_at(event_time)
+                    + timedelta(**profile.after[type])
+                  %}
+                {% endif %}
+
+                {% if start > current %}
+                  {% set start = start - timedelta(days=1) %}
+                {% endif %}
+
+                {% if profile.days.active_choice == 'Custom' %}
+                  {% set ns.shift = 0 %}
+
+                  {% for shift in range(7) %}
+                    {% if
+                      weekdays[(start.weekday() - shift) % 7]
+                        in profile.days.Custom
+                    %}
+                      {% set ns.shift = shift %}
+                      {% break %}
+                    {% endif %}
+                  {% endfor %}
+
+                  {% set start =
+                    start - timedelta(days=ns.shift)
+                  %}
+                {% endif %}
+
+                {% if ns.latest is none or start > ns.latest %}
+                  {% set ns.latest = start %}
+                  {% set ns.profile = profile %}
+                {% endif %}
+              {% endfor %}
+
+              {% set color_mode = ns.profile.color.active_choice %}
+
+              {{
+                combine(
+                  {'transition': turn_on_transition.Enabled}
+                    if turn_on_transition.active_choice == 'Enabled'
+                    else {},
+                  {'brightness_pct': ns.profile.brightness.Enabled}
+                    if ns.profile.brightness.active_choice == 'Enabled'
+                    else {},
+                  {color_keys[color_mode]: ns.profile.color[color_mode]}
+                    if color_mode in color_keys
+                    else {}
+                )
+              }}
+
+            {% else %}
+              {% set color_mode = color.active_choice %}
+
+              {{
+                combine(
+                  {'transition': turn_on_transition.Enabled}
+                    if turn_on_transition.active_choice == 'Enabled'
+                    else {},
+                  {'brightness_pct': brightness.Enabled}
+                    if brightness.active_choice == 'Enabled'
+                    else {},
+                  {color_keys[color_mode]: color[color_mode]}
+                    if color_mode in color_keys
+                    else {}
+                )
+              }}
+            {% endif %}
+
+      - alias: Apply light settings
+        action: light.turn_on
+        target:
+          entity_id: !input light_entities
+        data: "{{ light_data }}"
+
+  - alias: Continue only if a light is on
+    condition: state
+    entity_id: !input light_entities
+    state: "on"
+    match: any
+
+  - alias: Handle light lifecycle
+    parallel:
+
+      - alias: Turn-off lifecycle
+        sequence:
+
+          - alias: Wait for inactivity
+            wait_template: >-
+              {{
+                activity_entities
+                  | select('is_state', 'on')
+                  | first is undefined
+              }}
+
+          - alias: Off delay
+            delay: !input off_delay
+
+          - alias: Wait for turn-off blockers
+            wait_template: >-
+              {% set ns = namespace(blocked=false) %}
+
+              {% if off_blocker_timing == 'before_idle_dimming' %}
+                {% for blocker in off_blockers %}
+                  {% if is_state(blocker.entity, blocker.state) %}
+                    {% set ns.blocked = true %}
+                    {% break %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+
+              {{ not ns.blocked }}
+
+            timeout: >-
+              {{
+                off_blocker_timeout.Enabled
+                  if off_blocker_timeout.active_choice == 'Enabled'
+                  else {'days': 999}
+              }}
+
+          - alias: Idle dimming
+            enabled: !input idle_dimming
+            if:
+
+              - alias: Continue only if a light is on
+                condition: state
+                entity_id: !input light_entities
+                state: "on"
+                match: any
+
+            then:
+
+              - action: light.turn_on
+                target:
+                  entity_id: !input light_entities
+                data: >-
+                  {% set color_mode = idle_color.active_choice %}
+
+                  {{
+                    combine(
+                      {
+                        'transition':
+                          idle_transition.Enabled
+                      }
+                        if idle_transition.active_choice == 'Enabled'
+                        else {},
+                      {
+                        'brightness_pct':
+                          idle_brightness.Enabled
+                      }
+                        if idle_brightness.active_choice == 'Enabled'
+                        else {},
+                      {color_keys[color_mode]: idle_color[color_mode]}
+                        if color_mode in color_keys
+                        else {}
+                    )
+                  }}
+
+              - alias: Idle duration
+                delay: !input idle_delay
+
+          - alias: Wait for turn-off blockers
+            wait_template: >-
+              {% set ns = namespace(blocked=false) %}
+
+              {% if off_blocker_timing == 'before_turn_off' %}
+                {% for blocker in off_blockers %}
+                  {% if is_state(blocker.entity, blocker.state) %}
+                    {% set ns.blocked = true %}
+                    {% break %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+
+              {{ not ns.blocked }}
+
+            timeout: >-
+              {{
+                off_blocker_timeout.Enabled
+                  if off_blocker_timeout.active_choice == 'Enabled'
+                  else {'days': 999}
+              }}
+
+          - alias: Turn off light
+            action: light.turn_off
+            target:
+              entity_id: !input light_entities
+            data: >-
+              {{
+                {'transition': turn_off_transition.Enabled}
+                  if turn_off_transition.active_choice == 'Enabled'
+                  else {}
+              }}
+
+      - alias: Auto-update light profiles
+        enabled: !input auto_update
+        sequence:
+
+          - alias: Check light profiles
+            condition: template
+            value_template: >-
+              {{
+                light_profiles.active_choice
+                  in ['Custom', 'Schedule']
+              }}
+
+          - repeat:
+              while:
+
+                - alias: Continue only while activity is detected
+                  condition: state
+                  entity_id: !input activity_entities
+                  state: "on"
+                  match: any
+
+                - alias: Continue only while a light is on
+                  condition: state
+                  entity_id: !input light_entities
+                  state: "on"
+                  match: any
+
+                - alias: Continue only while profile has a next event
+                  condition: template
+                  value_template: >-
+                    {{
+                      light_profiles.active_choice != 'Schedule'
+                      or state_attr(
+                        light_profiles.Schedule,
+                        'next_event'
+                      ) is not none
+                    }}
+
+              sequence:
+
+                - alias: Resolve next light profile
+                  variables:
+                    next_profile: >-
+                      {% set current = now() %}
+
+                      {% if light_profiles.active_choice == 'Schedule' %}
+                        {% set next =
+                          state_attr(
+                            light_profiles.Schedule,
+                            'next_event'
+                          )
+                        %}
+
+                        {{ {'timeout': (next - current).total_seconds()} }}
+
+                      {% else %}
+                        {% set weekdays = [
+                          'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'
+                        ] %}
+                        {% set ns = namespace(
+                          next=none,
+                          profile=none,
+                          shift=0
+                        ) %}
+
+                        {% for profile in light_profiles.Custom %}
+                          {% set type = profile.after.active_choice %}
+
+                          {% if type == 'Time' %}
+                            {% set start =
+                              today_at(profile.after.Time)
+                            %}
+
+                          {% else %}
+                            {% set event =
+                              'next_rising'
+                                if type == 'Sunrise'
+                                else 'next_setting'
+                            %}
+
+                            {% set event_time =
+                              as_local(
+                                as_datetime(
+                                  state_attr('sun.sun', event)
+                                )
+                              ).strftime('%H:%M:%S')
+                            %}
+
+                            {% set start =
+                              today_at(event_time)
+                              + timedelta(**profile.after[type])
+                            %}
+                          {% endif %}
+
+                          {% if start <= current %}
+                            {% set start =
+                              start + timedelta(days=1)
+                            %}
+                          {% endif %}
+
+                          {% if
+                            profile.days.active_choice == 'Custom'
+                          %}
+                            {% set ns.shift = 0 %}
+
+                            {% for shift in range(7) %}
+                              {% if
+                                weekdays[
+                                  (start.weekday() + shift) % 7
+                                ]
+                                  in profile.days.Custom
+                              %}
+                                {% set ns.shift = shift %}
+                                {% break %}
+                              {% endif %}
+                            {% endfor %}
+
+                            {% set start =
+                              start + timedelta(days=ns.shift)
+                            %}
+                          {% endif %}
+
+                          {% if
+                            ns.next is none
+                            or start < ns.next
+                          %}
+                            {% set ns.next = start %}
+                            {% set ns.profile = profile %}
+                          {% endif %}
+                        {% endfor %}
+
+                        {% set color_mode = ns.profile.color.active_choice %}
+
+                        {{
+                          {
+                            'timeout': (ns.next - current).total_seconds(),
+                            'data': combine(
+                              {
+                                'transition': auto_update_transition.Enabled
+                              }
+                                if auto_update_transition.active_choice
+                                  == 'Enabled'
+                                else {},
+                              {
+                                'brightness_pct':
+                                  ns.profile.brightness.Enabled
+                              }
+                                if ns.profile.brightness.active_choice
+                                  == 'Enabled'
+                                else {},
+                              {color_keys[color_mode]: ns.profile.color[color_mode]}
+                                if color_mode in color_keys
+                                else {}
+                            )
+                          }
+                        }}
+                      {% endif %}
+
+                - alias: Wait for next light profile
+                  wait_template: >-
+                    {{
+                      activity_entities
+                        | select('is_state', 'on')
+                        | first is undefined
+                      or
+                      light_entities
+                        | select('is_state', 'on')
+                        | first is undefined
+                    }}
+                  timeout: "{{ next_profile.timeout }}"
+
+                - alias: Continue only on profile change
+                  condition: template
+                  value_template: "{{ not wait.completed }}"
+
+                - alias: Apply light profile
+                  if:
+                    - condition: template
+                      value_template: >-
+                        {{
+                          light_profiles.active_choice == 'Custom'
+                          or is_state(light_profiles.Schedule, 'on')
+                        }}
+                  then:
+                    - action: light.turn_on
+                      target:
+                        entity_id: !input light_entities
+                      data: >-
+                        {% if light_profiles.active_choice == 'Schedule' %}
+                          {% set attrs =
+                            states[light_profiles.Schedule].attributes
+                          %}
+                          {% set schedule_data =
+                            dict(
+                              attrs.items()
+                                | selectattr(
+                                    '0',
+                                    'in',
+                                    schedule_light_keys
+                                  )
+                            )
+                          %}
+
+                          {{
+                            combine(
+                              {
+                                'transition': auto_update_transition.Enabled
+                              }
+                                if
+                                  auto_update_transition.active_choice == 'Enabled'
+                                else {},
+                              schedule_data
+                            )
+                          }}
+
+                        {% else %}
+                          {{ next_profile.data }}
+                        {% endif %}
