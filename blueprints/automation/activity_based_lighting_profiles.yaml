@@ -1,22 +1,23 @@
 blueprint:
-  name: "Activity-based lighting + Profiles"
+  name: "Activity-based lighting + profiles"
   description: |-
-    Automatically manages selected lights based on occupancy or motion, with
-    flexible lighting profiles and turn-off behavior.
 
-    Supports simple lighting setups as well as more advanced control using
-    profiles, conditions, blockers, and optional automation features.
+    🚶 **Activity**
+    Control lights based on activity with support for door sensors, transitions, and idle lighting.
 
-    **Features:**
-    - Custom lighting profiles based on time, sunrise, or sunset, with automatic updates while activity is detected and the lights remain on.
-    - Integration with Home Assistant Schedule for externally managed lighting profiles.
-    - Flexible turn-off blockers with custom entity states, configurable timing, and an optional timeout.
-    - Watchdog and recovery after Home Assistant restarts for lights that remain on unexpectedly.
+    🎨 **Profiles**
+    Use **Time-based profiles** to schedule lighting, and **State-based profiles** for state-driven overrides.
 
-    **Note:** Future updates may require changes to existing automations created from this blueprint.
+    🛡️ **Control**
+    Manage behavior with turn-on conditions, turn-off blockers, and additional failsafes.
+
+    🧩 **Flexible setup**
+    Add as many profiles, blockers, and conditions as needed without fixed configuration slots.
+
   domain: automation
   author: nokside
-  source_url: https://raw.githubusercontent.com/nokside/ha-toolbox/main/blueprints/automation/activity_based_lighting_profiles.yaml
+  source_url: >-
+    https://raw.githubusercontent.com/nokside/ha-toolbox/main/blueprints/automation/activity_based_lighting_profiles.yaml
 
   homeassistant:
     min_version: 2026.1.0
@@ -32,7 +33,8 @@ blueprint:
           multiple: true
 
     activity_entities:
-      name: Occupancy / motion
+      name: Activity sensors
+      description: Occupancy and motion sensors.
       selector:
         entity:
           filter:
@@ -42,17 +44,16 @@ blueprint:
               device_class: motion
           multiple: true
 
-    off_delay:
-      name: Off delay
-      description: >-
-        Time to keep the lights unchanged after all occupancy and motion sensors clear.
+    activity_delay:
+      name: Activity delay
+      description: Time without activity before applying Idle lighting or turning off the lights.
       default:
         minutes: 1
       selector:
         duration:
 
-    transitions:
-      name: Lighting transitions
+    transitions_section:
+      name: Transitions
       icon: mdi:transition
       collapsed: true
       input:
@@ -61,7 +62,7 @@ blueprint:
           name: Turn-on transition
           default:
             active_choice: Disabled
-            Enabled: 0
+            Enabled: 1
           selector:
             choose:
               choices:
@@ -97,28 +98,25 @@ blueprint:
                       step: 0.1
                       unit_of_measurement: s
 
-    profiles:
-      name: Lighting profiles
-      icon: mdi:theme-light-dark
+    lighting_settings_section:
+      name: Lighting settings
+      icon: mdi:lightbulb-on
+      description: Used when Time-based profiles are disabled. State-based profiles can override these settings.
       collapsed: true
       input:
 
-        brightness:
+        lighting_brightness:
           name: Brightness
-          description: >-
-            Brightness used when Profiles are disabled.
           default:
             active_choice: Disabled
             Enabled: 100
           selector:
             choose:
               choices:
-
                 Disabled:
                   selector:
                     constant:
                       value: ""
-
                 Enabled:
                   selector:
                     number:
@@ -128,10 +126,17 @@ blueprint:
                       unit_of_measurement: "%"
                       mode: slider
 
-        color:
+        lighting_color:
           name: Color
-          description: >-
-            Color used when Profiles are disabled.
+          description: |-
+            RGBW and RGBWW values as a list:
+            ```yaml
+            - 255
+            - 255
+            - 255
+            - 255
+            # - 255 (for RGBWW)
+            ```
           default:
             active_choice: Disabled
             Temperature: 4000
@@ -153,12 +158,10 @@ blueprint:
           selector:
             choose:
               choices:
-
                 Disabled:
                   selector:
                     constant:
                       value: ""
-
                 Temperature:
                   selector:
                     number:
@@ -166,32 +169,50 @@ blueprint:
                       max: 6500
                       step: 5
                       unit_of_measurement: "kelvin"
-
                 RGB:
                   selector:
                     color_rgb:
-
                 RGBW:
                   selector:
                     object:
-
                 RGBWW:
                   selector:
                     object:
 
-        light_profiles:
-          name: Profiles
+    time_based_profiles_section:
+      name: Time-based profiles
+      icon: mdi:clock-outline
+      collapsed: true
+      input:
+
+        time_based_profiles:
+          name: " "
           description: |-
-            **Schedule** supports the following parameters in **Additional data**:
+            **[Schedule](https://www.home-assistant.io/integrations/schedule/)** supports the following parameters in **Additional data**:
 
             - `brightness`
             - `brightness_pct`
             - `color_name`
             - `color_temp_kelvin`
+            - `rgb_color` — `R,G,B` (`255,100,0`)
+            - `rgbw_color` — `R,G,B,W` (`255,100,0,128`)
+            - `rgbww_color` — `R,G,B,CW,WW` (`255,100,0,128,64`)
             - `white`
             - `effect`
-            - `flash`
             - `profile`
+
+            ---
+
+            ***Custom:***
+            *RGBW* and *RGBWW* values as a list:
+            ```yaml
+            - 255
+            - 255
+            - 255
+            - 128
+            # - 128 (for RGBWW)
+            ```
+            *Entity:* Supports `input_datetime` with a time; date-only entities are skipped.
           default:
             active_choice: Disabled
             Custom:
@@ -317,7 +338,6 @@ blueprint:
                   selector:
                     constant:
                       value: ""
-
                 Custom:
                   selector:
                     object:
@@ -333,7 +353,6 @@ blueprint:
 
                         days:
                           label: Days of the week
-                          required: true
                           selector:
                             choose:
                               choices:
@@ -346,24 +365,23 @@ blueprint:
                                     select:
                                       options:
                                         - label: Monday
-                                          value: mon
+                                          value: "0"
                                         - label: Tuesday
-                                          value: tue
+                                          value: "1"
                                         - label: Wednesday
-                                          value: wed
+                                          value: "2"
                                         - label: Thursday
-                                          value: thu
+                                          value: "3"
                                         - label: Friday
-                                          value: fri
+                                          value: "4"
                                         - label: Saturday
-                                          value: sat
+                                          value: "5"
                                         - label: Sunday
-                                          value: sun
+                                          value: "6"
                                       multiple: true
-                                      mode: list
 
                         after:
-                          label: Start
+                          label: After
                           required: true
                           selector:
                             choose:
@@ -371,6 +389,12 @@ blueprint:
                                 Time:
                                   selector:
                                     time:
+
+                                Entity:
+                                  selector:
+                                    entity:
+                                      filter:
+                                        domain: input_datetime
 
                                 Sunrise:
                                   selector:
@@ -384,7 +408,6 @@ blueprint:
 
                         brightness:
                           label: Brightness
-                          required: true
                           selector:
                             choose:
                               choices:
@@ -403,7 +426,6 @@ blueprint:
 
                         color:
                           label: Color
-                          required: true
                           selector:
                             choose:
                               choices:
@@ -434,32 +456,26 @@ blueprint:
                       filter:
                         - domain: schedule
 
-        auto_update:
-          name: Auto-update
-          description: >-
-            Automatically updates the lights when the active profile changes while
-            occupancy or motion is still detected and at least one selected light
-            remains on.
+        time_based_dynamic:
+          name: Dynamic updates
+          description: Dynamically apply the next Time-based profile while activity is detected.
           default: false
           selector:
             boolean:
 
-        auto_update_transition:
-          name: Auto-update transition
-          description: >-
-            Transition used when Auto-update applies a new profile.
+        time_based_transition:
+          name: Transition
+          description: Duration to use when applying the next Time-based profile.
           default:
             active_choice: Disabled
             Enabled: 1
           selector:
             choose:
               choices:
-
                 Disabled:
                   selector:
                     constant:
                       value: ""
-
                 Enabled:
                   selector:
                     number:
@@ -468,32 +484,154 @@ blueprint:
                       step: 0.1
                       unit_of_measurement: s
 
-    dimming:
-      name: Idle dimming
-      icon: mdi:brightness-6
+    state_based_profiles_section:
+      name: State-based profiles
+      icon: mdi:priority-high
       collapsed: true
       input:
 
-        idle_dimming:
-          name: Dim the light after the Off delay instead of turning it off immediately.
-          default: false
+        state_based_profiles:
+          name: " "
+          description: |-
+            **Active profiles override Lighting settings and Time-based profiles.
+            Order matters. The first matching profile will be applied.**
+            *Also, you can use a State-based profile as a bypass activated by an entity state with Brightness and Color Disabled to hand over control while it is active.*
+
+            RGBW and RGBWW values as a list:
+            ```yaml
+            - 255
+            - 255
+            - 255
+            - 255
+            # - 255 (for RGBWW)
+            ```
+          default: []
           selector:
-            boolean:
+            object:
+              multiple: true
+              label_field: name
+              fields:
+
+                name:
+                  label: Name
+                  required: true
+                  selector:
+                    text:
+
+                entities:
+                  label: Entities
+                  required: true
+                  selector:
+                    entity:
+                      multiple: true
+
+                states:
+                  label: States
+                  required: true
+                  selector:
+                    text:
+                      multiple: true
+
+                match:
+                  label: Match
+                  selector:
+                    choose:
+                      choices:
+                        Any:
+                          selector:
+                            constant:
+                              value: ""
+                        All:
+                          selector:
+                            constant:
+                              value: ""
+
+                brightness:
+                  label: Brightness
+                  selector:
+                    choose:
+                      choices:
+                        Disabled:
+                          selector:
+                            constant:
+                              value: ""
+                        Enabled:
+                          selector:
+                            number:
+                              min: 1
+                              max: 100
+                              step: 1
+                              unit_of_measurement: "%"
+                              mode: slider
+
+                color:
+                  label: Color
+                  selector:
+                    choose:
+                      choices:
+                        Disabled:
+                          selector:
+                            constant:
+                              value: ""
+                        Temperature:
+                          selector:
+                            number:
+                              min: 2000
+                              max: 6500
+                              step: 5
+                              unit_of_measurement: "kelvin"
+                        RGB:
+                          selector:
+                            color_rgb:
+                        RGBW:
+                          selector:
+                            object:
+                        RGBWW:
+                          selector:
+                            object:
+
+        state_based_transition:
+          name: Transition
+          description: Duration to use when applying a profile.
+          default:
+            active_choice: Disabled
+            Enabled: 1
+          selector:
+            choose:
+              choices:
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+                Enabled:
+                  selector:
+                    number:
+                      min: 0
+                      max: 300
+                      step: 0.1
+                      unit_of_measurement: s
+
+    idle_lighting_section:
+      name: Idle lighting
+      icon: mdi:motion-sensor-off
+      description: >-
+        Optional brightness and color applied after the **Activity delay**.
+        Lighting settings or Time-based profiles must be configured to restore the lights when activity returns.
+      collapsed: true
+      input:
 
         idle_brightness:
-          name: Idle brightness
+          name: Brightness
           default:
             active_choice: Disabled
             Enabled: 10
           selector:
             choose:
               choices:
-
                 Disabled:
                   selector:
                     constant:
                       value: ""
-
                 Enabled:
                   selector:
                     number:
@@ -504,7 +642,16 @@ blueprint:
                       mode: slider
 
         idle_color:
-          name: Idle color
+          name: Color
+          description: |-
+            RGBW and RGBWW values as a list:
+            ```yaml
+            - 255
+            - 255
+            - 255
+            - 255
+            # - 255 (for RGBWW)
+            ```
           default:
             active_choice: Disabled
             Temperature: 2200
@@ -526,12 +673,10 @@ blueprint:
           selector:
             choose:
               choices:
-
                 Disabled:
                   selector:
                     constant:
                       value: ""
-
                 Temperature:
                   selector:
                     number:
@@ -539,33 +684,28 @@ blueprint:
                       max: 6500
                       step: 5
                       unit_of_measurement: "kelvin"
-
                 RGB:
                   selector:
                     color_rgb:
-
                 RGBW:
                   selector:
                     object:
-
                 RGBWW:
                   selector:
                     object:
 
         idle_transition:
-          name: Idle transition
+          name: Transition
           default:
             active_choice: Disabled
             Enabled: 1
           selector:
             choose:
               choices:
-
                 Disabled:
                   selector:
                     constant:
                       value: ""
-
                 Enabled:
                   selector:
                     number:
@@ -574,23 +714,22 @@ blueprint:
                       step: 0.1
                       unit_of_measurement: s
 
-        idle_delay:
-          name: Idle duration
-          description: >-
-            How long to keep the lights dimmed before turning them off.
+        idle_lighting_delay:
+          name: Delay
           default:
             minutes: 1
           selector:
             duration:
 
-    turn_on:
+    turn_on_conditions_section:
       name: Turn-on conditions
       icon: mdi:check-circle-outline
       collapsed: true
       input:
 
         turn_on_conditions:
-          name: Conditions that must be met for occupancy, motion, or a door to turn on the light. Leave empty or disable to allow turn-on without conditions.
+          name: " "
+          description: Leave empty or keep conditions disabled to allow turn-on at any time.
           default:
             - condition: sun
               after: sunset
@@ -601,55 +740,72 @@ blueprint:
           selector:
             condition:
 
-    blockers:
+    turn_off_blockers_section:
       name: Turn-off blockers
       icon: mdi:shield-lock
       collapsed: true
       input:
 
-        off_blockers:
-          name: Blockers
-          description: >-
-            Pause the turn-off process while any configured entity is in its blocking
-            state. Turn-off continues automatically when no blockers remain.
+        turn_off_blockers:
+          name: " "
+          description: Prevents Idle lighting or turn-off while a blocker is active.
           default: []
           selector:
             object:
               multiple: true
-              label_field: entity
-              description_field: state
+              label_field: name
               fields:
 
-                entity:
-                  label: Entity
-                  required: true
-                  selector:
-                    entity:
-
-                state:
-                  label: Blocking state
+                name:
+                  label: Name
                   required: true
                   selector:
                     text:
 
-        off_blocker_timing:
-          name: Timing
-          description: >-
-            Choose when blockers pause the turn-off process.
-          default: before_turn_off
-          selector:
-            select:
-              options:
-                - label: Before idle dimming
-                  value: before_idle_dimming
-                - label: Before turn-off
-                  value: before_turn_off
+                entities:
+                  label: Entities
+                  required: true
+                  selector:
+                    entity:
+                      multiple: true
 
-        off_blocker_timeout:
-          name: Timeout
-          description: >-
-            Maximum time to wait for blockers to clear before continuing the turn-off
-            process.
+                states:
+                  label: States
+                  required: true
+                  selector:
+                    text:
+                      multiple: true
+
+                match:
+                  label: Match
+                  selector:
+                    choose:
+                      choices:
+                        Any:
+                          selector:
+                            constant:
+                              value: ""
+                        All:
+                          selector:
+                            constant:
+                              value: ""
+
+                when:
+                  label: When
+                  selector:
+                    choose:
+                      choices:
+                        Before turn-off:
+                          selector:
+                            constant:
+                              value: ""
+                        Before idle lighting:
+                          selector:
+                            constant:
+                              value: ""
+
+        idle_blocker_timeout:
+          name: Idle lighting blocker timeout
           default:
             active_choice: Disabled
             Enabled:
@@ -657,26 +813,40 @@ blueprint:
           selector:
             choose:
               choices:
-
                 Disabled:
                   selector:
                     constant:
                       value: ""
-
                 Enabled:
                   selector:
                     duration:
 
-    optional:
-      name: Optional settings
+        turn_off_blocker_timeout:
+          name: Turn-off blocker timeout
+          default:
+            active_choice: Disabled
+            Enabled:
+              hours: 1
+          selector:
+            choose:
+              choices:
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+                Enabled:
+                  selector:
+                    duration:
+
+    additional_settings_section:
+      name: Additional settings
       icon: mdi:cog
       collapsed: true
       input:
 
         door_entities:
-          name: Doors
-          description: >-
-            Doors are only used for turn-on and do not keep the lights on.
+          name: Door sensors
+          description: Optional. Turn on the lights when opened.
           default: []
           selector:
             entity:
@@ -685,29 +855,29 @@ blueprint:
                   device_class: door
               multiple: true
 
-        watchdog:
+        turn_off_watchdog:
           name: Turn-off watchdog
-          description: >-
-            Starts the normal turn-off process when any selected light is on and no
-            occupancy or motion is detected. This also catches lights turned
-            on outside this automation or left on after a missed turn-off.
-            The normal Off delay, Idle dimming, and blockers still apply.
-            Note: You must restart Home Assistant once after creating this automation for the watchdog to work.
+          description: |-
+            Triggered if lights are on, there is no activity, and the automation is not running.
+            Catches lights turned on from any source (manually, remotely, etc.) while the area is inactive.
+            Lights will turn off according to your configured delays, blockers, and other settings.
+
+            ⚠️ If enabled while creating the automation, this will not work until Home Assistant is restarted.
+            To use it immediately, save the automation first, then enable this option and save again.
           default: false
           selector:
             boolean:
 
         ha_start:
-          name: Home Assistant startup
-          description: >-
-            Checks the lights when Home Assistant starts or restarts. If any selected
-            light is already on, the normal turn-off rules are applied.
+          name: Home Assistant start
+          description: |-
+            Triggered when Home Assistant starts if lights are on.
+            Lights will turn off according to your configured delays, blockers, and other settings.
           default: false
           selector:
             boolean:
 
 mode: restart
-max_exceeded: silent
 
 trace:
   stored_traces: 20
@@ -719,44 +889,31 @@ trigger_variables:
 
 triggers:
 
-  - alias: Activity detected
-    id: "activity"
+  - alias: Activity is detected
+    id: "turn_on"
     trigger: template
     value_template: >-
-      {{
-        activity_entities
-          | select('is_state', 'on')
-          | first is defined
-      }}
+      {{ activity_entities | select('is_state', 'on') | first is defined }}
 
-  - alias: Door opened
-    id: "activity"
+  - alias: Door opens
+    id: "turn_on"
     trigger: state
     entity_id: !input door_entities
     to: "on"
     enabled: "{{ door_entities != [] }}"
 
   - alias: Turn-off watchdog
-    id: "watchdog"
+    id: "turn_off_watchdog"
     trigger: template
     value_template: >-
       {{
-        light_entities
-          | select('is_state', 'on')
-          | first is defined
-        and
-        activity_entities
-          | select('is_state', 'on')
-          | first is undefined
-        and
-        state_attr(
-          this.entity_id if this else 'none',
-          'current'
-        ) | int(1) == 0
+        light_entities | select('is_state', 'on') | first is defined
+        and activity_entities | reject('is_state', 'off') | first is undefined
+        and is_state_attr(this.entity_id if this else 'none', 'current', 0)
       }}
-    enabled: !input watchdog
+    enabled: !input turn_off_watchdog
 
-  - alias: Home Assistant started
+  - alias: Home Assistant start
     trigger: homeassistant
     event: start
     enabled: !input ha_start
@@ -764,551 +921,537 @@ triggers:
 variables:
   light_entities: !input light_entities
   activity_entities: !input activity_entities
+
   turn_on_transition: !input turn_on_transition
   turn_off_transition: !input turn_off_transition
-  brightness: !input brightness
-  color: !input color
-  light_profiles: !input light_profiles
-  auto_update_transition: !input auto_update_transition
-  idle_transition: !input idle_transition
+
+  lighting_brightness: !input lighting_brightness
+  lighting_color: !input lighting_color
+
+  state_based_profiles: !input state_based_profiles
+  state_based_transition: !input state_based_transition
+
+  time_based_profiles: !input time_based_profiles
+  time_based_transition: !input time_based_transition
+  time_based_dynamic: !input time_based_dynamic
+
   idle_brightness: !input idle_brightness
   idle_color: !input idle_color
-  idle_delay: !input idle_delay
-  off_blockers: !input off_blockers
-  off_blocker_timing: !input off_blocker_timing
-  off_blocker_timeout: !input off_blocker_timeout
-  color_keys:
+  idle_transition: !input idle_transition
+  idle_lighting_delay: !input idle_lighting_delay
+
+  idle_lighting_enabled: >-
+    {{
+      idle_brightness.active_choice != 'Disabled'
+      or idle_color.active_choice != 'Disabled'
+    }}
+
+  turn_off_blockers: !input turn_off_blockers
+  idle_blocker_timeout: !input idle_blocker_timeout
+  turn_off_blocker_timeout: !input turn_off_blocker_timeout
+
+  color_data_keys:
     Temperature: color_temp_kelvin
     RGB: rgb_color
     RGBW: rgbw_color
     RGBWW: rgbww_color
-  schedule_light_keys:
+
+  schedule_data_keys:
     - brightness
     - brightness_pct
     - color_name
     - color_temp_kelvin
+    - rgb_color
+    - rgbw_color
+    - rgbww_color
     - white
-    - flash
     - effect
     - profile
 
 conditions:
 
-  - alias: Prevent watchdog self-trigger
+  - alias: Prevent turn-off watchdog self-trigger
     condition: template
     value_template: >-
-      {{
-        trigger.id != 'watchdog'
-        or trigger.entity_id != this.entity_id
-      }}
+      {{ trigger.id != 'turn_off_watchdog' or trigger.entity_id != this.entity_id }}
 
 actions:
 
-  - alias: Check light availability
+  - alias: Check if any light is available
     condition: template
     value_template: >-
-      {{
-        light_entities
-          | select('has_value')
-          | first is defined
-      }}
+      {{ light_entities | select('has_value') | first is defined }}
 
-  - alias: Check activity availability
+  - alias: Check if any activity sensor is available
     condition: template
     value_template: >-
-      {{
-        activity_entities
-          | select('has_value')
-          | first is defined
-      }}
+      {{ activity_entities | select('has_value') | first is defined }}
 
-  - alias: Turn on from activity
-    if:
+  - alias: Check light state or turn-on conditions
+    condition: or
+    conditions:
+      - condition: state
+        entity_id: !input light_entities
+        state: "on"
+        match: any
 
-      - condition: trigger
-        id: "activity"
-
-    then:
-
-      - alias: Check turn-on permission
-        condition: or
+      - condition: and
         conditions:
-
-          - condition: state
-            entity_id: !input light_entities
-            state: "on"
-            match: any
+          - condition: trigger
+            id: "turn_on"
 
           - condition: !input turn_on_conditions
 
-      - alias: Resolve light settings
-        variables:
-          light_data: >-
-            {% if light_profiles.active_choice == 'Schedule' %}
-              {% set schedule_data = {} %}
+  - alias: If turn-on trigger
+    if:
+      - condition: trigger
+        id: "turn_on"
 
-              {% if is_state(light_profiles.Schedule, 'on') %}
-                {% set attrs =
-                  states[light_profiles.Schedule].attributes
-                %}
-                {% set schedule_data =
-                  dict(
-                    attrs.items()
-                      | selectattr('0', 'in', schedule_light_keys)
-                  )
-                %}
-              {% endif %}
+    then:
+      - alias: Track lighting profiles
+        repeat:
+          sequence:
 
-              {{
-                combine(
-                  {
-                    'transition': turn_on_transition.Enabled
-                  }
-                    if
-                      turn_on_transition.active_choice == 'Enabled'
-                    else {},
-                  schedule_data
-                )
-              }}
+            - alias: Resolve active profile
+              variables:
+                profile_state: >-
+                  {% set current_time = now() %}
+                  {% set light_data = {} %}
+                  {% set current_profile = none %}
+                  {% set next_event_time = none %}
+                  {% set transition = time_based_transition %}
+                  {% set profile_type = 'Disabled' %}
+                  {% set profile_name = none %}
 
-            {% elif light_profiles.active_choice == 'Custom' %}
-              {% set current = now() %}
-              {% set weekdays = [
-                'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'
-              ] %}
-              {% set ns = namespace(
-                latest=none,
-                profile=none,
-                shift=0
-              ) %}
+                  {% if state_based_profiles %}
+                    {% set state_based_match = namespace(index=none) %}
+                    {% for state_based_profile in state_based_profiles %}
+                      {% set profile_matches =
+                        state_based_profile.entities
+                        and (
+                          (state_based_profile.entities
+                            | reject('is_state', state_based_profile.states) | first is undefined)
+                          if 'match' in state_based_profile
+                            and state_based_profile.match.active_choice == 'All'
+                          else (state_based_profile.entities
+                            | select('is_state', state_based_profile.states) | first is defined)
+                        )
+                      %}
 
-              {% for profile in light_profiles.Custom %}
-                {% set type = profile.after.active_choice %}
+                      {% if profile_matches %}
+                        {% set state_based_match.index = loop.index0 %}
+                        {% break %}
+                      {% endif %}
+                    {% endfor %}
+                  {% endif %}
 
-                {% if type == 'Time' %}
-                  {% set start = today_at(profile.after.Time) %}
-
-                {% else %}
-                  {% set event =
-                    'next_rising'
-                      if type == 'Sunrise'
-                      else 'next_setting'
-                  %}
-
-                  {% set event_time =
-                    as_local(
-                      as_datetime(state_attr('sun.sun', event))
-                    ).strftime('%H:%M:%S')
-                  %}
-
-                  {% set start =
-                    today_at(event_time)
-                    + timedelta(**profile.after[type])
-                  %}
-                {% endif %}
-
-                {% if start > current %}
-                  {% set start = start - timedelta(days=1) %}
-                {% endif %}
-
-                {% if profile.days.active_choice == 'Custom' %}
-                  {% set ns.shift = 0 %}
-
-                  {% for shift in range(7) %}
-                    {% if
-                      weekdays[(start.weekday() - shift) % 7]
-                        in profile.days.Custom
+                  {% if state_based_profiles and state_based_match.index is not none %}
+                    {% set current_profile = state_based_profiles[state_based_match.index] %}
+                    {% set profile_type = 'State-based' %}
+                    {% set profile_name =
+                      current_profile.name if 'name' in current_profile else none
                     %}
-                      {% set ns.shift = shift %}
+                    {% set transition = state_based_transition %}
+
+                  {% elif time_based_profiles.active_choice == 'Schedule' %}
+                    {% set profile_type = 'Schedule' %}
+                    {% if is_state(time_based_profiles.Schedule, 'on') %}
+                      {% set attrs = states[time_based_profiles.Schedule].attributes %}
+                      {% set light_data =
+                        dict(attrs.items() | selectattr('0', 'in', schedule_data_keys))
+                      %}
+                      {% set color_keys_to_parse = ['rgb_color', 'rgbw_color', 'rgbww_color'] %}
+                      {% set key_to_parse = color_keys_to_parse | select('in', attrs) | first | default(none) %}
+
+                      {% if key_to_parse is not none %}
+                        {% set light_data = combine(
+                          light_data,
+                          {key_to_parse: attrs[key_to_parse].split(',') | map('trim') | map('int') | list}
+                        ) %}
+                      {% endif %}
+                    {% endif %}
+
+                    {% set next_event_time = state_attr(time_based_profiles.Schedule, 'next_event') %}
+
+                  {% elif time_based_profiles.active_choice == 'Custom' %}
+                    {% set profile_type = 'Custom' %}
+
+                    {% macro resolve_profile_timing(profile, current_time, returns) %}
+                      {% set start_mode = profile.after.active_choice %}
+
+                      {% if 'days' in profile and profile.days.active_choice == 'Custom' %}
+                        {% set weekdays = profile.days.Custom | map('int') | list %}
+                      {% else %}
+                        {% set weekdays = range(7) | list %}
+                      {% endif %}
+
+                      {% set start_time = none %}
+                      {% set previous_start = none %}
+                      {% set next_start = none %}
+                      {% set next_sun_start = none %}
+
+                      {% if start_mode == 'Entity' %}
+                        {% set entity = profile.after.Entity %}
+
+                        {% if state_attr(entity, 'has_time') %}
+                          {% if state_attr(entity, 'has_date') %}
+                            {% set entity_start = as_local(as_datetime(states(entity))) %}
+
+                            {% if entity_start.weekday() in weekdays %}
+                              {% if entity_start <= current_time %}
+                                {% set previous_start = entity_start %}
+                              {% else %}
+                                {% set next_start = entity_start %}
+                              {% endif %}
+                            {% endif %}
+
+                          {% else %}
+                            {% set start_time = today_at(states(entity)) %}
+                          {% endif %}
+                        {% endif %}
+
+                      {% elif start_mode in ['Sunrise', 'Sunset'] %}
+                        {% set event = 'next_rising' if start_mode == 'Sunrise' else 'next_setting' %}
+                        {% set next_sun = as_local(as_datetime(state_attr('sun.sun', event))) %}
+
+                        {% if next_sun.date() > current_time.date() %}
+                          {% set event_time = next_sun - timedelta(days=1) %}
+                          {% if event_time > current_time %}
+                            {% set event_time = current_time %}
+                          {% endif %}
+                        {% else %}
+                          {% set event_time = next_sun %}
+                        {% endif %}
+
+                        {% set offset = timedelta(**profile.after[start_mode]) %}
+                        {% set start_time = event_time + offset %}
+                        {% set next_sun_start = next_sun + offset %}
+
+                      {% else %}
+                        {% set start_time = today_at(profile.after.Time) %}
+                      {% endif %}
+
+                      {% if start_time is not none %}
+                        {% set day_shift = (current_time.date() - start_time.date()).days %}
+                        {% set start_base = start_time + timedelta(days=day_shift) %}
+                        {% set previous_base =
+                          start_base if start_base <= current_time else start_base - timedelta(days=1)
+                        %}
+                        {% set next_base = previous_base + timedelta(days=1) %}
+
+                        {% set previous_weekday = previous_base.weekday() %}
+                        {% set next_weekday = next_base.weekday() %}
+
+                        {% set previous_weekdays = weekdays | select('le', previous_weekday) | list %}
+                        {% set previous_day =
+                          previous_weekdays | max if previous_weekdays else weekdays | max
+                        %}
+
+                        {% set next_weekdays = weekdays | select('ge', next_weekday) | list %}
+                        {% set next_day = next_weekdays | min if next_weekdays else weekdays | min %}
+
+                        {% set previous_start =
+                          previous_base - timedelta(days=(previous_weekday - previous_day) % 7)
+                        %}
+                        {% set next_start =
+                          next_base + timedelta(days=(next_day - next_weekday) % 7)
+                        %}
+
+                        {% if next_sun_start is not none %}
+                          {% if
+                            next_sun_start <= current_time
+                            and next_sun_start.date() == previous_start.date()
+                          %}
+                            {% set previous_start = next_sun_start %}
+                          {% elif
+                            next_sun_start > current_time
+                            and next_sun_start.date() == next_start.date()
+                          %}
+                            {% set next_start = next_sun_start %}
+                          {% endif %}
+                        {% endif %}
+                      {% endif %}
+
+                      {% do returns({
+                        'profile': profile,
+                        'previous_start': previous_start,
+                        'next_start': next_start
+                      }) %}
+                    {% endmacro %}
+
+                    {% set resolve_timing = resolve_profile_timing | as_function %}
+                    {% set profile_timings =
+                      time_based_profiles.Custom | map('apply', resolve_timing, current_time) | list
+                    %}
+
+                    {% set current_timing =
+                      profile_timings | rejectattr('previous_start', 'none')
+                        | max(attribute='previous_start') | default(none)
+                    %}
+                    {% set next_timing =
+                      profile_timings | rejectattr('next_start', 'none')
+                        | min(attribute='next_start') | default(none)
+                    %}
+
+                    {% set current_profile =
+                      current_timing.profile if current_timing is not none else none
+                    %}
+                    {% if current_profile is not none and 'name' in current_profile %}
+                      {% set profile_name = current_profile.name %}
+                    {% endif %}
+                    {% set next_event_time =
+                      next_timing.next_start if next_timing is not none else none
+                    %}
+
+                  {% elif time_based_profiles.active_choice == 'Disabled' %}
+                    {% set profile_type = 'Lighting' %}
+                    {% set current_profile = {'brightness': lighting_brightness, 'color': lighting_color} %}
+                    {% set transition = {'active_choice': 'Disabled'} %}
+                  {% endif %}
+
+                  {% if current_profile is not none %}
+                    {% set brightness =
+                      current_profile.brightness if 'brightness' in current_profile else none
+                    %}
+                    {% set color = current_profile.color if 'color' in current_profile else none %}
+                    {% set color_mode = color.active_choice if color is not none else none %}
+                    {% set light_data =
+                      combine(
+                        {'brightness_pct': brightness.Enabled}
+                          if brightness is not none and brightness.active_choice == 'Enabled' else {},
+                        {color_data_keys[color_mode]: color[color_mode]}
+                          if color is not none and color_mode in color_data_keys else {}
+                      )
+                    %}
+                  {% endif %}
+
+                  {% set light_data = combine(
+                    light_data,
+                    {'transition': turn_on_transition.Enabled}
+                      if repeat.first and turn_on_transition.active_choice == 'Enabled'
+                      else {'transition': transition.Enabled}
+                        if not repeat.first and transition.active_choice == 'Enabled' and light_data
+                        else {}
+                  ) %}
+
+                  {% if time_based_dynamic and next_event_time is not none %}
+                    {% set profile_wait_timeout = {
+                      'seconds': as_timestamp(next_event_time) - as_timestamp(current_time)
+                    } %}
+                  {% elif state_based_profiles %}
+                    {% set profile_wait_timeout = {'days': 999} %}
+                  {% else %}
+                    {% set profile_wait_timeout = none %}
+                  {% endif %}
+
+                  {% set result = {'type': profile_type} %}
+
+                  {% if profile_name is not none %}
+                    {% set result = combine(result, {'name': profile_name}) %}
+                  {% endif %}
+
+                  {% set result = combine(result, {
+                    'light_data': light_data,
+                    'profile_wait_timeout': profile_wait_timeout
+                  }) %}
+
+                  {% if state_based_profiles %}
+                    {% set result = combine(result, {'state_based_index': state_based_match.index}) %}
+                  {% endif %}
+
+                  {{ result }}
+
+            - alias: If light.turn_on should be performed
+              if:
+                - condition: or
+                  conditions:
+                    - condition: template
+                      value_template: "{{ repeat.first }}"
+
+                    - condition: state
+                      entity_id: !input light_entities
+                      state: "on"
+                      match: any
+
+              then:
+                - action: light.turn_on
+                  target:
+                    entity_id: !input light_entities
+                  data: "{{ profile_state.light_data }}"
+
+            - alias: Check if profile can change
+              condition: template
+              value_template: "{{ profile_state.profile_wait_timeout is not none }}"
+
+            - alias: Wait until profile changes or no activity
+              wait_template: >-
+                {% set activity_cleared =
+                  activity_entities | select('is_state', 'on') | first is undefined
+                %}
+                {% set state_based_changed = false %}
+
+                {% if not activity_cleared and state_based_profiles %}
+                  {% set state_based_match = namespace(index=none) %}
+                  {% for state_based_profile in state_based_profiles %}
+                    {% set profile_matches =
+                      state_based_profile.entities
+                      and (
+                        (state_based_profile.entities
+                          | reject('is_state', state_based_profile.states) | first is undefined)
+                        if 'match' in state_based_profile
+                          and state_based_profile.match.active_choice == 'All'
+                        else (state_based_profile.entities
+                          | select('is_state', state_based_profile.states) | first is defined)
+                      )
+                    %}
+
+                    {% if profile_matches %}
+                      {% set state_based_match.index = loop.index0 %}
                       {% break %}
                     {% endif %}
                   {% endfor %}
 
-                  {% set start =
-                    start - timedelta(days=ns.shift)
+                  {% set state_based_changed =
+                    state_based_match.index != profile_state.state_based_index
                   %}
                 {% endif %}
 
-                {% if ns.latest is none or start > ns.latest %}
-                  {% set ns.latest = start %}
-                  {% set ns.profile = profile %}
-                {% endif %}
-              {% endfor %}
+                {{ activity_cleared or state_based_changed }}
+              timeout: "{{ profile_state.profile_wait_timeout }}"
+              continue_on_timeout: true
 
-              {% set color_mode = ns.profile.color.active_choice %}
+          until:
+            - alias: Until no activity or profile cannot change
+              condition: template
+              value_template: >-
+                {{
+                  activity_entities | select('is_state', 'on') | first is undefined
+                  or profile_state.profile_wait_timeout is none
+                }}
 
-              {{
-                combine(
-                  {'transition': turn_on_transition.Enabled}
-                    if turn_on_transition.active_choice == 'Enabled'
-                    else {},
-                  {'brightness_pct': ns.profile.brightness.Enabled}
-                    if ns.profile.brightness.active_choice == 'Enabled'
-                    else {},
-                  {color_keys[color_mode]: ns.profile.color[color_mode]}
-                    if color_mode in color_keys
-                    else {}
-                )
-              }}
+  - alias: Wait until no activity
+    wait_template: >-
+      {{ activity_entities | select('is_state', 'on') | first is undefined }}
 
-            {% else %}
-              {% set color_mode = color.active_choice %}
-
-              {{
-                combine(
-                  {'transition': turn_on_transition.Enabled}
-                    if turn_on_transition.active_choice == 'Enabled'
-                    else {},
-                  {'brightness_pct': brightness.Enabled}
-                    if brightness.active_choice == 'Enabled'
-                    else {},
-                  {color_keys[color_mode]: color[color_mode]}
-                    if color_mode in color_keys
-                    else {}
-                )
-              }}
-            {% endif %}
-
-      - alias: Apply light settings
-        action: light.turn_on
-        target:
-          entity_id: !input light_entities
-        data: "{{ light_data }}"
-
-  - alias: Continue only if a light is on
+  - alias: Check if any light is on
     condition: state
     entity_id: !input light_entities
     state: "on"
     match: any
 
-  - alias: Handle light lifecycle
-    parallel:
+  - alias: Activity delay
+    delay: !input activity_delay
 
-      - alias: Turn-off lifecycle
-        sequence:
+  - alias: Wait for blockers before idle lighting
+    wait_template: >-
+      {% set blocker_state = namespace(active=false) %}
 
-          - alias: Wait for inactivity
-            wait_template: >-
-              {{
-                activity_entities
-                  | select('is_state', 'on')
-                  | first is undefined
-              }}
+      {% for blocker in turn_off_blockers %}
+        {% if 'when' in blocker and blocker.when.active_choice == 'Before idle lighting' %}
+          {% set blocker_matches =
+            blocker.entities
+            and (
+              (blocker.entities | reject('is_state', blocker.states) | first is undefined)
+              if 'match' in blocker and blocker.match.active_choice == 'All'
+              else (blocker.entities | select('is_state', blocker.states) | first is defined)
+            )
+          %}
 
-          - alias: Off delay
-            delay: !input off_delay
+          {% if blocker_matches %}
+            {% set blocker_state.active = true %}
+            {% break %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
 
-          - alias: Wait for turn-off blockers
-            wait_template: >-
-              {% set ns = namespace(blocked=false) %}
+      {{
+        not idle_lighting_enabled
+        or light_entities | select('is_state', 'on') | first is undefined
+        or not blocker_state.active
+      }}
 
-              {% if off_blocker_timing == 'before_idle_dimming' %}
-                {% for blocker in off_blockers %}
-                  {% if is_state(blocker.entity, blocker.state) %}
-                    {% set ns.blocked = true %}
-                    {% break %}
-                  {% endif %}
-                {% endfor %}
-              {% endif %}
+    timeout: >-
+      {{
+        idle_blocker_timeout.Enabled
+          if idle_blocker_timeout.active_choice == 'Enabled' else {'days': 999}
+      }}
 
-              {{ not ns.blocked }}
+  - alias: If idle lighting is enabled
+    if:
+      - condition: template
+        value_template: "{{ idle_lighting_enabled }}"
 
-            timeout: >-
-              {{
-                off_blocker_timeout.Enabled
-                  if off_blocker_timeout.active_choice == 'Enabled'
-                  else {'days': 999}
-              }}
+      - alias: Check if any light is on
+        condition: state
+        entity_id: !input light_entities
+        state: "on"
+        match: any
 
-          - alias: Idle dimming
-            enabled: !input idle_dimming
-            if:
+    then:
+      - action: light.turn_on
+        target:
+          entity_id: !input light_entities
+        data: >-
+          {% set color_mode = idle_color.active_choice %}
 
-              - alias: Continue only if a light is on
-                condition: state
-                entity_id: !input light_entities
-                state: "on"
-                match: any
+          {{
+            combine(
+              {'transition': idle_transition.Enabled}
+                if idle_transition.active_choice == 'Enabled' else {},
+              {'brightness_pct': idle_brightness.Enabled}
+                if idle_brightness.active_choice == 'Enabled' else {},
+              {color_data_keys[color_mode]: idle_color[color_mode]} if color_mode in color_data_keys else {}
+            )
+          }}
 
-            then:
+      - alias: Idle lighting delay
+        delay: !input idle_lighting_delay
 
-              - action: light.turn_on
-                target:
-                  entity_id: !input light_entities
-                data: >-
-                  {% set color_mode = idle_color.active_choice %}
+  - alias: Wait for blockers before turn-off
+    wait_template: >-
+      {% set blocker_state = namespace(active=false) %}
 
-                  {{
-                    combine(
-                      {
-                        'transition':
-                          idle_transition.Enabled
-                      }
-                        if idle_transition.active_choice == 'Enabled'
-                        else {},
-                      {
-                        'brightness_pct':
-                          idle_brightness.Enabled
-                      }
-                        if idle_brightness.active_choice == 'Enabled'
-                        else {},
-                      {color_keys[color_mode]: idle_color[color_mode]}
-                        if color_mode in color_keys
-                        else {}
-                    )
-                  }}
+      {% for blocker in turn_off_blockers %}
+        {% if 'when' not in blocker or blocker.when.active_choice != 'Before idle lighting' %}
+          {% set blocker_matches =
+            blocker.entities
+            and (
+              (blocker.entities | reject('is_state', blocker.states) | first is undefined)
+              if 'match' in blocker and blocker.match.active_choice == 'All'
+              else (blocker.entities | select('is_state', blocker.states) | first is defined)
+            )
+          %}
 
-              - alias: Idle duration
-                delay: !input idle_delay
+          {% if blocker_matches %}
+            {% set blocker_state.active = true %}
+            {% break %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
 
-          - alias: Wait for turn-off blockers
-            wait_template: >-
-              {% set ns = namespace(blocked=false) %}
+      {{
+        light_entities | select('is_state', 'on') | first is undefined
+        or not blocker_state.active
+      }}
 
-              {% if off_blocker_timing == 'before_turn_off' %}
-                {% for blocker in off_blockers %}
-                  {% if is_state(blocker.entity, blocker.state) %}
-                    {% set ns.blocked = true %}
-                    {% break %}
-                  {% endif %}
-                {% endfor %}
-              {% endif %}
+    timeout: >-
+      {{
+        turn_off_blocker_timeout.Enabled
+          if turn_off_blocker_timeout.active_choice == 'Enabled' else {'days': 999}
+      }}
 
-              {{ not ns.blocked }}
+  - alias: Check if any light is on
+    condition: state
+    entity_id: !input light_entities
+    state: "on"
+    match: any
 
-            timeout: >-
-              {{
-                off_blocker_timeout.Enabled
-                  if off_blocker_timeout.active_choice == 'Enabled'
-                  else {'days': 999}
-              }}
-
-          - alias: Turn off light
-            action: light.turn_off
-            target:
-              entity_id: !input light_entities
-            data: >-
-              {{
-                {'transition': turn_off_transition.Enabled}
-                  if turn_off_transition.active_choice == 'Enabled'
-                  else {}
-              }}
-
-      - alias: Auto-update light profiles
-        enabled: !input auto_update
-        sequence:
-
-          - alias: Check light profiles
-            condition: template
-            value_template: >-
-              {{
-                light_profiles.active_choice
-                  in ['Custom', 'Schedule']
-              }}
-
-          - repeat:
-              while:
-
-                - alias: Continue only while activity is detected
-                  condition: state
-                  entity_id: !input activity_entities
-                  state: "on"
-                  match: any
-
-                - alias: Continue only while a light is on
-                  condition: state
-                  entity_id: !input light_entities
-                  state: "on"
-                  match: any
-
-                - alias: Continue only while profile has a next event
-                  condition: template
-                  value_template: >-
-                    {{
-                      light_profiles.active_choice != 'Schedule'
-                      or state_attr(
-                        light_profiles.Schedule,
-                        'next_event'
-                      ) is not none
-                    }}
-
-              sequence:
-
-                - alias: Resolve next light profile
-                  variables:
-                    next_profile: >-
-                      {% set current = now() %}
-
-                      {% if light_profiles.active_choice == 'Schedule' %}
-                        {% set next =
-                          state_attr(
-                            light_profiles.Schedule,
-                            'next_event'
-                          )
-                        %}
-
-                        {{ {'timeout': (next - current).total_seconds()} }}
-
-                      {% else %}
-                        {% set weekdays = [
-                          'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'
-                        ] %}
-                        {% set ns = namespace(
-                          next=none,
-                          profile=none,
-                          shift=0
-                        ) %}
-
-                        {% for profile in light_profiles.Custom %}
-                          {% set type = profile.after.active_choice %}
-
-                          {% if type == 'Time' %}
-                            {% set start =
-                              today_at(profile.after.Time)
-                            %}
-
-                          {% else %}
-                            {% set event =
-                              'next_rising'
-                                if type == 'Sunrise'
-                                else 'next_setting'
-                            %}
-
-                            {% set event_time =
-                              as_local(
-                                as_datetime(
-                                  state_attr('sun.sun', event)
-                                )
-                              ).strftime('%H:%M:%S')
-                            %}
-
-                            {% set start =
-                              today_at(event_time)
-                              + timedelta(**profile.after[type])
-                            %}
-                          {% endif %}
-
-                          {% if start <= current %}
-                            {% set start =
-                              start + timedelta(days=1)
-                            %}
-                          {% endif %}
-
-                          {% if
-                            profile.days.active_choice == 'Custom'
-                          %}
-                            {% set ns.shift = 0 %}
-
-                            {% for shift in range(7) %}
-                              {% if
-                                weekdays[
-                                  (start.weekday() + shift) % 7
-                                ]
-                                  in profile.days.Custom
-                              %}
-                                {% set ns.shift = shift %}
-                                {% break %}
-                              {% endif %}
-                            {% endfor %}
-
-                            {% set start =
-                              start + timedelta(days=ns.shift)
-                            %}
-                          {% endif %}
-
-                          {% if
-                            ns.next is none
-                            or start < ns.next
-                          %}
-                            {% set ns.next = start %}
-                            {% set ns.profile = profile %}
-                          {% endif %}
-                        {% endfor %}
-
-                        {% set color_mode = ns.profile.color.active_choice %}
-
-                        {{
-                          {
-                            'timeout': (ns.next - current).total_seconds(),
-                            'data': combine(
-                              {
-                                'transition': auto_update_transition.Enabled
-                              }
-                                if auto_update_transition.active_choice
-                                  == 'Enabled'
-                                else {},
-                              {
-                                'brightness_pct':
-                                  ns.profile.brightness.Enabled
-                              }
-                                if ns.profile.brightness.active_choice
-                                  == 'Enabled'
-                                else {},
-                              {color_keys[color_mode]: ns.profile.color[color_mode]}
-                                if color_mode in color_keys
-                                else {}
-                            )
-                          }
-                        }}
-                      {% endif %}
-
-                - alias: Wait for next light profile
-                  wait_template: >-
-                    {{
-                      activity_entities
-                        | select('is_state', 'on')
-                        | first is undefined
-                      or
-                      light_entities
-                        | select('is_state', 'on')
-                        | first is undefined
-                    }}
-                  timeout: "{{ next_profile.timeout }}"
-
-                - alias: Continue only on profile change
-                  condition: template
-                  value_template: "{{ not wait.completed }}"
-
-                - alias: Apply light profile
-                  if:
-                    - condition: template
-                      value_template: >-
-                        {{
-                          light_profiles.active_choice == 'Custom'
-                          or is_state(light_profiles.Schedule, 'on')
-                        }}
-                  then:
-                    - action: light.turn_on
-                      target:
-                        entity_id: !input light_entities
-                      data: >-
-                        {% if light_profiles.active_choice == 'Schedule' %}
-                          {% set attrs =
-                            states[light_profiles.Schedule].attributes
-                          %}
-                          {% set schedule_data =
-                            dict(
-                              attrs.items()
-                                | selectattr(
-                                    '0',
-                                    'in',
-                                    schedule_light_keys
-                                  )
-                            )
-                          %}
-
-                          {{
-                            combine(
-                              {
-                                'transition': auto_update_transition.Enabled
-                              }
-                                if
-                                  auto_update_transition.active_choice == 'Enabled'
-                                else {},
-                              schedule_data
-                            )
-                          }}
-
-                        {% else %}
-                          {{ next_profile.data }}
-                        {% endif %}
+  - alias: Turn off lights
+    action: light.turn_off
+    target:
+      entity_id: !input light_entities
+    data: >-
+      {{
+        {'transition': turn_off_transition.Enabled}
+          if turn_off_transition.active_choice == 'Enabled' else {}
+      }}
