@@ -1,0 +1,817 @@
+blueprint:
+  name: "Profile-based lighting"
+  description: |-
+
+    🎨 **Profiles**
+    Keep selected lights matched to the active profile using **Time-based profiles** for scheduled lighting
+    and **State-based profiles** for state-driven overrides.
+    Profiles are applied only while lights are on; this blueprint does not turn lights on or off.
+
+    🧩 **Flexible setup**
+    Add as many Time-based and State-based profiles as needed without fixed configuration slots.
+  domain: automation
+  author: nokside
+  source_url: >-
+    https://raw.githubusercontent.com/nokside/ha-toolbox/main/blueprints/automation/profile_based_lighting.yaml
+  homeassistant:
+    min_version: 2026.1.0
+
+  input:
+
+    light_entities:
+      name: Lights
+      selector:
+        entity:
+          filter:
+            - domain: light
+          multiple: true
+
+    ha_start:
+      name: Home Assistant start
+      description: >-
+        Applies the active profile if any selected light is already on.
+      default: false
+      selector:
+        boolean:
+
+    turn_on_transition:
+      name: Turn-on transition
+      description: >-
+        Used only when the active profile is first applied after the lights are turned on.
+      default:
+        active_choice: Disabled
+        Enabled: 1
+      selector:
+        choose:
+          choices:
+            Disabled:
+              selector:
+                constant:
+                  value: ""
+            Enabled:
+              selector:
+                number:
+                  min: 0
+                  max: 300
+                  step: 0.1
+                  unit_of_measurement: s
+
+    time_based_profiles_section:
+      name: Time-based profiles
+      icon: mdi:clock-outline
+      collapsed: true
+      input:
+
+        time_based_profiles:
+          name: " "
+          description: |-
+            **[Schedule](https://www.home-assistant.io/integrations/schedule/)** supports the following parameters in **Additional data**:
+
+            - `brightness`
+            - `brightness_pct`
+            - `color_name`
+            - `color_temp_kelvin`
+            - `rgb_color` — `R,G,B` (`255,100,0`)
+            - `rgbw_color` — `R,G,B,W` (`255,100,0,128`)
+            - `rgbww_color` — `R,G,B,CW,WW` (`255,100,0,128,64`)
+            - `white`
+            - `effect`
+            - `profile`
+
+            ---
+
+            ***Custom:***
+            *RGBW* and *RGBWW* values as a list:
+            ```yaml
+            - 255
+            - 255
+            - 255
+            - 128
+            # - 128 (for RGBWW)
+            ```
+            *Entity:* Supports `input_datetime` with a time; any date is ignored, and date-only entities are skipped.
+          default:
+            active_choice: Custom
+            Custom:
+              - name: Sunrise
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Sunrise
+                  Sunrise:
+                    minutes: 0
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 50
+                color:
+                  active_choice: Temperature
+                  Temperature: 2700
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+              - name: Daytime
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Sunrise
+                  Sunrise:
+                    hours: 2
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 100
+                color:
+                  active_choice: Temperature
+                  Temperature: 4100
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+              - name: Sunset
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Sunset
+                  Sunset:
+                    minutes: 0
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 70
+                color:
+                  active_choice: Temperature
+                  Temperature: 3000
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+              - name: Night
+                days:
+                  active_choice: All days
+                after:
+                  active_choice: Time
+                  Time: "23:00:00"
+                brightness:
+                  active_choice: Enabled
+                  Enabled: 20
+                color:
+                  active_choice: Temperature
+                  Temperature: 2200
+                  RGB:
+                    - 255
+                    - 255
+                    - 255
+                  RGBW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                  RGBWW:
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+                    - 255
+
+          selector:
+            choose:
+              choices:
+                Custom:
+                  selector:
+                    object:
+                      multiple: true
+                      label_field: name
+                      fields:
+
+                        name:
+                          label: Name
+                          required: true
+                          selector:
+                            text:
+
+                        days:
+                          label: Days of the week
+                          selector:
+                            choose:
+                              choices:
+                                All days:
+                                  selector:
+                                    constant:
+                                      value: ""
+                                Custom:
+                                  selector:
+                                    select:
+                                      options:
+                                        - label: Monday
+                                          value: "0"
+                                        - label: Tuesday
+                                          value: "1"
+                                        - label: Wednesday
+                                          value: "2"
+                                        - label: Thursday
+                                          value: "3"
+                                        - label: Friday
+                                          value: "4"
+                                        - label: Saturday
+                                          value: "5"
+                                        - label: Sunday
+                                          value: "6"
+                                      multiple: true
+
+                        after:
+                          label: After
+                          required: true
+                          selector:
+                            choose:
+                              choices:
+                                Time:
+                                  selector:
+                                    time:
+
+                                Entity:
+                                  selector:
+                                    entity:
+                                      filter:
+                                        domain: input_datetime
+
+                                Sunrise:
+                                  selector:
+                                    duration:
+                                      allow_negative: true
+
+                                Sunset:
+                                  selector:
+                                    duration:
+                                      allow_negative: true
+
+                        brightness:
+                          label: Brightness
+                          selector:
+                            choose:
+                              choices:
+                                Disabled:
+                                  selector:
+                                    constant:
+                                      value: ""
+                                Enabled:
+                                  selector:
+                                    number:
+                                      min: 1
+                                      max: 100
+                                      step: 1
+                                      unit_of_measurement: "%"
+                                      mode: slider
+
+                        color:
+                          label: Color
+                          selector:
+                            choose:
+                              choices:
+                                Disabled:
+                                  selector:
+                                    constant:
+                                      value: ""
+                                Temperature:
+                                  selector:
+                                    number:
+                                      min: 2000
+                                      max: 6500
+                                      step: 5
+                                      unit_of_measurement: "kelvin"
+                                RGB:
+                                  selector:
+                                    color_rgb:
+                                RGBW:
+                                  selector:
+                                    object:
+                                RGBWW:
+                                  selector:
+                                    object:
+
+                Schedule:
+                  selector:
+                    entity:
+                      filter:
+                        - domain: schedule
+
+        time_based_transition:
+          name: Transition
+          description: Duration to use when applying the next Time-based profile.
+          default:
+            active_choice: Disabled
+            Enabled: 1
+          selector:
+            choose:
+              choices:
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+                Enabled:
+                  selector:
+                    number:
+                      min: 0
+                      max: 300
+                      step: 0.1
+                      unit_of_measurement: s
+
+    state_based_profiles_section:
+      name: State-based profiles
+      icon: mdi:priority-high
+      collapsed: true
+      input:
+
+        state_based_profiles:
+          name: " "
+          description: |-
+            **Active profiles override Time-based profiles.
+            Order matters. The first matching profile will be applied.**
+            *Also, you can use a State-based profile as a bypass activated by an entity state with Brightness and Color Disabled to hand over control while it is active.*
+
+            RGBW and RGBWW values as a list:
+            ```yaml
+            - 255
+            - 255
+            - 255
+            - 255
+            # - 255 (for RGBWW)
+            ```
+          default: []
+          selector:
+            object:
+              multiple: true
+              label_field: name
+              fields:
+
+                name:
+                  label: Name
+                  required: true
+                  selector:
+                    text:
+
+                entities:
+                  label: Entities
+                  required: true
+                  selector:
+                    entity:
+                      multiple: true
+
+                states:
+                  label: States
+                  required: true
+                  selector:
+                    text:
+                      multiple: true
+
+                match:
+                  label: Match
+                  selector:
+                    choose:
+                      choices:
+                        Any:
+                          selector:
+                            constant:
+                              value: ""
+                        All:
+                          selector:
+                            constant:
+                              value: ""
+
+                brightness:
+                  label: Brightness
+                  selector:
+                    choose:
+                      choices:
+                        Disabled:
+                          selector:
+                            constant:
+                              value: ""
+                        Enabled:
+                          selector:
+                            number:
+                              min: 1
+                              max: 100
+                              step: 1
+                              unit_of_measurement: "%"
+                              mode: slider
+
+                color:
+                  label: Color
+                  selector:
+                    choose:
+                      choices:
+                        Disabled:
+                          selector:
+                            constant:
+                              value: ""
+                        Temperature:
+                          selector:
+                            number:
+                              min: 2000
+                              max: 6500
+                              step: 5
+                              unit_of_measurement: "kelvin"
+                        RGB:
+                          selector:
+                            color_rgb:
+                        RGBW:
+                          selector:
+                            object:
+                        RGBWW:
+                          selector:
+                            object:
+
+        state_based_transition:
+          name: Transition
+          description: Duration to use when applying a profile.
+          default:
+            active_choice: Disabled
+            Enabled: 1
+          selector:
+            choose:
+              choices:
+                Disabled:
+                  selector:
+                    constant:
+                      value: ""
+                Enabled:
+                  selector:
+                    number:
+                      min: 0
+                      max: 300
+                      step: 0.1
+                      unit_of_measurement: s
+mode: restart
+
+trigger_variables:
+  light_entities: !input light_entities
+
+triggers:
+
+  - alias: Lights turn on
+    id: "turn_on"
+    trigger: template
+    value_template: >-
+      {{ light_entities | select('is_state', 'on') | first is defined }}
+
+  - alias: Home Assistant start
+    trigger: homeassistant
+    event: start
+    enabled: !input ha_start
+
+variables:
+  light_entities: !input light_entities
+  turn_on_transition: !input turn_on_transition
+
+  state_based_profiles: !input state_based_profiles
+  state_based_transition: !input state_based_transition
+
+  time_based_profiles: !input time_based_profiles
+  time_based_transition: !input time_based_transition
+
+  color_data_keys:
+    Temperature: color_temp_kelvin
+    RGB: rgb_color
+    RGBW: rgbw_color
+    RGBWW: rgbww_color
+
+  schedule_data_keys:
+    - brightness
+    - brightness_pct
+    - color_name
+    - color_temp_kelvin
+    - rgb_color
+    - rgbw_color
+    - rgbww_color
+    - white
+    - effect
+    - profile
+
+actions:
+
+  - alias: Check if any light is on
+    condition: template
+    value_template: >-
+      {{ light_entities | select('is_state', 'on') | first is defined }}
+
+  - alias: Track lighting profiles
+    repeat:
+
+      until:
+        - alias: Until lights are off or profile cannot change
+          condition: template
+          value_template: >-
+            {{
+              light_entities | select('is_state', 'on') | first is undefined
+              or profile_state.profile_wait_timeout is none
+            }}
+
+      sequence:
+
+        - alias: Resolve active profile
+          variables:
+            profile_state: >-
+              {% set current_time = now() %}
+              {% set light_data = {} %}
+              {% set current_profile = none %}
+              {% set next_event_time = none %}
+              {% set transition = time_based_transition %}
+              {% set profile_type = none %}
+              {% set profile_name = none %}
+
+              {% if state_based_profiles %}
+                {% set state_based_match = namespace(index=none) %}
+                {% for state_based_profile in state_based_profiles %}
+                  {% set profile_matches =
+                    state_based_profile.entities
+                    and (
+                      (state_based_profile.entities
+                        | reject('is_state', state_based_profile.states) | first is undefined)
+                      if 'match' in state_based_profile and state_based_profile.match.active_choice == 'All'
+                      else (state_based_profile.entities
+                        | select('is_state', state_based_profile.states) | first is defined)
+                    )
+                  %}
+
+                  {% if profile_matches %}
+                    {% set state_based_match.index = loop.index0 %}
+                    {% break %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+
+              {% if state_based_profiles and state_based_match.index is not none %}
+                {% set current_profile = state_based_profiles[state_based_match.index] %}
+                {% set profile_type = 'State-based' %}
+                {% set profile_name = current_profile.name if 'name' in current_profile else none %}
+                {% set transition = state_based_transition %}
+
+              {% elif time_based_profiles.active_choice == 'Schedule' %}
+                {% set profile_type = 'Schedule' %}
+                {% if is_state(time_based_profiles.Schedule, 'on') %}
+                  {% set attrs = states[time_based_profiles.Schedule].attributes %}
+                  {% set light_data = dict(attrs.items() | selectattr('0', 'in', schedule_data_keys)) %}
+                  {% set color_keys_to_parse = ['rgb_color', 'rgbw_color', 'rgbww_color'] %}
+                  {% set key_to_parse = color_keys_to_parse | select('in', attrs) | first | default(none) %}
+
+                  {% if key_to_parse is not none %}
+                    {% set light_data = combine(
+                      light_data,
+                      {key_to_parse: attrs[key_to_parse].split(',') | map('trim') | map('int') | list}
+                    ) %}
+                  {% endif %}
+                {% endif %}
+
+                {% set next_event_time = state_attr(time_based_profiles.Schedule, 'next_event') %}
+
+              {% else %}
+                {% set profile_type = 'Custom' %}
+
+                {% macro resolve_profile_timing(profile, current_time, returns) %}
+                  {% set start_mode = profile.after.active_choice %}
+
+                  {% if 'days' in profile and profile.days.active_choice == 'Custom' %}
+                    {% set weekdays = profile.days.Custom | map('int') | list %}
+                  {% else %}
+                    {% set weekdays = range(7) | list %}
+                  {% endif %}
+
+                  {% set start_time = none %}
+                  {% set previous_start = none %}
+                  {% set next_start = none %}
+                  {% set next_sun_start = none %}
+
+                  {% if start_mode == 'Entity' %}
+                    {% set entity = profile.after.Entity %}
+
+                    {% if state_attr(entity, 'has_time') %}
+                      {% if state_attr(entity, 'has_date') %}
+                        {% set entity_start = as_local(as_datetime(states(entity))) %}
+
+                        {% if entity_start.weekday() in weekdays %}
+                          {% if entity_start <= current_time %}
+                            {% set previous_start = entity_start %}
+                          {% else %}
+                            {% set next_start = entity_start %}
+                          {% endif %}
+                        {% endif %}
+
+                      {% else %}
+                        {% set start_time = today_at(states(entity)) %}
+                      {% endif %}
+                    {% endif %}
+
+                  {% elif start_mode in ['Sunrise', 'Sunset'] %}
+                    {% set event = 'next_rising' if start_mode == 'Sunrise' else 'next_setting' %}
+                    {% set next_sun = as_local(as_datetime(state_attr('sun.sun', event))) %}
+
+                    {% if next_sun.date() > current_time.date() %}
+                      {% set event_time = next_sun - timedelta(days=1) %}
+                      {% if event_time > current_time %}
+                        {% set event_time = current_time %}
+                      {% endif %}
+                    {% else %}
+                      {% set event_time = next_sun %}
+                    {% endif %}
+
+                    {% set offset = timedelta(**profile.after[start_mode]) %}
+                    {% set start_time = event_time + offset %}
+                    {% set next_sun_start = next_sun + offset %}
+
+                  {% else %}
+                    {% set start_time = today_at(profile.after.Time) %}
+                  {% endif %}
+
+                  {% if start_time is not none %}
+                    {% set day_shift = (current_time.date() - start_time.date()).days %}
+                    {% set start_base = start_time + timedelta(days=day_shift) %}
+                    {% set previous_base =
+                      start_base if start_base <= current_time else start_base - timedelta(days=1)
+                    %}
+                    {% set next_base = previous_base + timedelta(days=1) %}
+
+                    {% set previous_weekday = previous_base.weekday() %}
+                    {% set next_weekday = next_base.weekday() %}
+
+                    {% set previous_weekdays = weekdays | select('le', previous_weekday) | list %}
+                    {% set previous_day = previous_weekdays | max if previous_weekdays else weekdays | max %}
+
+                    {% set next_weekdays = weekdays | select('ge', next_weekday) | list %}
+                    {% set next_day = next_weekdays | min if next_weekdays else weekdays | min %}
+
+                    {% set previous_start =
+                      previous_base - timedelta(days=(previous_weekday - previous_day) % 7)
+                    %}
+                    {% set next_start =
+                      next_base + timedelta(days=(next_day - next_weekday) % 7)
+                    %}
+
+                    {% if next_sun_start is not none %}
+                      {% if next_sun_start <= current_time and next_sun_start.date() == previous_start.date() %}
+                        {% set previous_start = next_sun_start %}
+                      {% elif next_sun_start > current_time and next_sun_start.date() == next_start.date() %}
+                        {% set next_start = next_sun_start %}
+                      {% endif %}
+                    {% endif %}
+                  {% endif %}
+
+                  {% do returns({
+                    'profile': profile,
+                    'previous_start': previous_start,
+                    'next_start': next_start
+                  }) %}
+                {% endmacro %}
+
+                {% set resolve_timing = resolve_profile_timing | as_function %}
+                {% set profile_timings =
+                  time_based_profiles.Custom | map('apply', resolve_timing, current_time) | list
+                %}
+
+                {% set current_timing =
+                  profile_timings | rejectattr('previous_start', 'none')
+                    | max(attribute='previous_start') | default(none)
+                %}
+                {% set next_timing =
+                  profile_timings | rejectattr('next_start', 'none')
+                    | min(attribute='next_start') | default(none)
+                %}
+
+                {% set current_profile = current_timing.profile if current_timing is not none else none %}
+                {% if current_profile is not none and 'name' in current_profile %}
+                  {% set profile_name = current_profile.name %}
+                {% endif %}
+                {% set next_event_time = next_timing.next_start if next_timing is not none else none %}
+              {% endif %}
+
+              {% if current_profile is not none %}
+                {% set brightness = current_profile.brightness if 'brightness' in current_profile else none %}
+                {% set color = current_profile.color if 'color' in current_profile else none %}
+                {% set color_mode = color.active_choice if color is not none else none %}
+                {% set light_data =
+                  combine(
+                    {'brightness_pct': brightness.Enabled}
+                      if brightness is not none and brightness.active_choice == 'Enabled' else {},
+                    {color_data_keys[color_mode]: color[color_mode]}
+                      if color is not none and color_mode in color_data_keys else {}
+                  )
+                %}
+              {% endif %}
+
+              {% set light_data = combine(
+                light_data,
+                ({'transition': turn_on_transition.Enabled}
+                  if turn_on_transition.active_choice == 'Enabled' else {})
+                  if repeat.first and trigger.id == 'turn_on'
+                  else {'transition': transition.Enabled}
+                    if transition.active_choice == 'Enabled' and light_data else {}
+              ) %}
+
+              {% if next_event_time is not none %}
+                {% set profile_wait_timeout = {
+                  'seconds': as_timestamp(next_event_time) - as_timestamp(current_time)
+                } %}
+              {% elif state_based_profiles %}
+                {% set profile_wait_timeout = {'days': 999} %}
+              {% else %}
+                {% set profile_wait_timeout = none %}
+              {% endif %}
+
+              {% set result = {'type': profile_type} %}
+
+              {% if profile_name is not none %}
+                {% set result = combine(result, {'name': profile_name}) %}
+              {% endif %}
+
+              {% set result = combine(result, {
+                'light_data': light_data,
+                'profile_wait_timeout': profile_wait_timeout
+              }) %}
+
+              {% if state_based_profiles %}
+                {% set result = combine(result, {'state_based_index': state_based_match.index}) %}
+              {% endif %}
+
+              {{ result }}
+
+        - alias: If light.turn_on should be performed
+          if:
+            - condition: template
+              value_template: "{{ profile_state.light_data != {} }}"
+          then:
+            - action: light.turn_on
+              target:
+                entity_id: !input light_entities
+              data: "{{ profile_state.light_data }}"
+
+        - alias: Check if profile can change
+          condition: template
+          value_template: "{{ profile_state.profile_wait_timeout is not none }}"
+
+        - alias: Wait until profile changes or lights turn off
+          wait_template: >-
+            {% set lights_off = light_entities | select('is_state', 'on') | first is undefined %}
+            {% set state_based_changed = false %}
+
+            {% if not lights_off and state_based_profiles %}
+              {% set state_based_match = namespace(index=none) %}
+              {% for state_based_profile in state_based_profiles %}
+                {% set profile_matches =
+                  state_based_profile.entities
+                  and (
+                    (state_based_profile.entities
+                      | reject('is_state', state_based_profile.states) | first is undefined)
+                    if 'match' in state_based_profile and state_based_profile.match.active_choice == 'All'
+                    else (state_based_profile.entities
+                      | select('is_state', state_based_profile.states) | first is defined)
+                  )
+                %}
+
+                {% if profile_matches %}
+                  {% set state_based_match.index = loop.index0 %}
+                  {% break %}
+                {% endif %}
+              {% endfor %}
+
+              {% set state_based_changed =
+                state_based_match.index != profile_state.state_based_index
+              %}
+            {% endif %}
+
+            {{ lights_off or state_based_changed }}
+          timeout: "{{ profile_state.profile_wait_timeout }}"
+          continue_on_timeout: true
