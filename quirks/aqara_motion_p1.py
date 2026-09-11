@@ -132,23 +132,13 @@ class AqaraP1ManufacturerCluster(CustomCluster):
 
 
 class AqaraP1LifelineCluster(LocalDataCluster):
-    """Values decoded from the Aqara lifeline."""
-
     cluster_id = 0xFC02
     ep_attribute = "aqara_p1_lifeline"
 
-    BATTERY_HYSTERESIS_MV: Final = 10
-
-    BATTERY_PERCENTAGE_THRESHOLDS_MV: Final = (
-        (2870, 100),
-        (2840, 50),
-        (2810, 25),
-        (2790, 5),
-    )
+    MAX_VOLTS_MV: Final = 3000
+    MIN_VOLTS_MV: Final = 2600
 
     class AttributeDefs(BaseAttributeDefs):
-        """Attribute definitions."""
-
         battery_percentage: Final = ZCLAttributeDef(
             id=0x0000,
             type=t.uint8_t,
@@ -166,41 +156,22 @@ class AqaraP1LifelineCluster(LocalDataCluster):
     }
 
     def update_from_voltage(self, voltage_mv: int) -> None:
-        """Update battery voltage and estimated battery percentage."""
         self.update_attribute(
             self.AttributeDefs.battery_voltage.id,
             voltage_mv / 1000,
         )
+
+        if voltage_mv >= self.MAX_VOLTS_MV:
+            percentage = 100
+        elif voltage_mv < self.MIN_VOLTS_MV:
+            percentage = 0
+        else:
+            percentage = int(0.00045 * voltage_mv**2 - 2.277 * voltage_mv + 2880)
+
         self.update_attribute(
             self.AttributeDefs.battery_percentage.id,
-            self._battery_percentage_with_hysteresis(voltage_mv),
+            percentage,
         )
-
-    def _battery_percentage_from_voltage(self, voltage_mv: int) -> int:
-        """Estimate coarse CR battery percentage from voltage."""
-        for threshold_mv, percentage in self.BATTERY_PERCENTAGE_THRESHOLDS_MV:
-            if voltage_mv >= threshold_mv:
-                return percentage
-
-        return 0
-
-    def _battery_percentage_with_hysteresis(self, voltage_mv: int) -> int:
-        """Estimate coarse CR battery percentage with two-way hysteresis."""
-        cached_percentage = self.get(
-            self.AttributeDefs.battery_percentage.id,
-        )
-        new_percentage = self._battery_percentage_from_voltage(voltage_mv)
-
-        if cached_percentage is None or new_percentage == cached_percentage:
-            return new_percentage
-
-        if new_percentage < cached_percentage:
-            voltage_mv += self.BATTERY_HYSTERESIS_MV
-        else:
-            voltage_mv -= self.BATTERY_HYSTERESIS_MV
-
-        return self._battery_percentage_from_voltage(voltage_mv)
-
 
 class AqaraP1OccupancyCluster(LocalDataCluster, OccupancySensing):
     """Local occupancy cluster for Aqara Motion Sensor P1."""
