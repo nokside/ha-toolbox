@@ -276,12 +276,6 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
             access="rp",
             manufacturer_code=AQARA_MFG_CODE,
         )
-        init_token: Final = ZCLAttributeDef(
-            id=0x00FF,
-            type=t.LVBytes,
-            access="w",
-            manufacturer_code=AQARA_MFG_CODE,
-        )
         detection_range_raw: Final = ZCLAttributeDef(
             id=0x019A,
             type=t.LVBytes,
@@ -298,6 +292,18 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
             id=0x00F7,
             type=t.LVBytes,
             access="rp",
+            manufacturer_code=AQARA_MFG_CODE,
+        )
+        init_state: Final = ZCLAttributeDef(
+            id=0x00E6,
+            type=t.uint8_t,
+            access="rp",
+            manufacturer_code=AQARA_MFG_CODE,
+        )
+        init_token: Final = ZCLAttributeDef(
+            id=0x00FF,
+            type=t.LVBytes,
+            access="w",
             manufacturer_code=AQARA_MFG_CODE,
         )
 
@@ -351,34 +357,28 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
 
         return values
 
-    @staticmethod
-    def _generate_init_token() -> t.LVBytes:
-        """Generate Aqara-style 16-byte BCD-like init token."""
-        token = bytearray()
-
-        for _ in range(16):
-            high_decimal = random.randrange(10)
-            low_decimal = random.randrange(10)
-            token.append((high_decimal << 4) | low_decimal)
-
-        return t.LVBytes(bytes(token))
-
     async def apply_custom_configuration(
         self,
         *args: Any,
         **kwargs: Any,
     ) -> None:
         """Apply FP300 custom configuration."""
-        # 0x00FF is accepted by FP300, possibly part of Aqara init,
-        # but no proven functional effect yet.
         try:
-            await self.write_attributes(
-                {
-                    self.AttributeDefs.init_token: self._generate_init_token(),
-                },
+            success, _ = await self.read_attributes(
+                [self.AttributeDefs.init_state.id],
             )
+            init_state = success.get(self.AttributeDefs.init_state.id)
+
+            if init_state == 0:
+                await self.write_attributes(
+                    {
+                        self.AttributeDefs.init_token.name: t.LVBytes(
+                            random.randbytes(16)
+                        ),
+                    },
+                )
         except Exception as exc:
-            self.debug("Failed to write init token: %r", exc)
+            self.debug("Failed to initialize init_token: %r", exc)
 
 
 class FP300DetectionRangeNumber(BaseNumber):
