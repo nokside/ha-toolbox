@@ -1,14 +1,16 @@
-"""Quirk for Philips Hue motion sensors."""
+"""Quirk v2 for Philips Hue SML001/SML002 motion sensors."""
 
 from typing import Final
 
-from zhaquirks.builder import QuirkBuilder
-from zhaquirks.clusters import CustomCluster
 from zigpy import types as t
 from zigpy.zcl import ClusterType
 from zigpy.zcl.clusters.general import Basic, OnOff
 from zigpy.zcl.clusters.measurement import OccupancySensing
-from zigpy.zcl.foundation import DataTypeId, ZCLAttributeDef
+from zigpy.zcl.foundation import ZCLAttributeDef
+
+from zhaquirks.builder import QuirkBuilder
+from zhaquirks.clusters import CustomCluster
+from zhaquirks.philips import PHILIPS, PhilipsOccupancySensing
 
 
 PHILIPS_MFG_CODE: Final = 0x100B
@@ -23,7 +25,7 @@ class MotionSensitivity(t.enum8):
 
 
 class PhilipsMotionBasicCluster(CustomCluster, Basic):
-    """Hue Motion Basic cluster."""
+    """Basic cluster."""
 
     class AttributeDefs(Basic.AttributeDefs):
         """Attribute definitions."""
@@ -36,28 +38,12 @@ class PhilipsMotionBasicCluster(CustomCluster, Basic):
         )
 
 
-class PhilipsMotionOccupancyCluster(CustomCluster, OccupancySensing):
-    """Hue Motion Occupancy cluster."""
-
-    class AttributeDefs(OccupancySensing.AttributeDefs):
-        """Attribute definitions."""
-
-        sensitivity: Final = ZCLAttributeDef(
-            id=0x0030,
-            type=MotionSensitivity,
-            zcl_type=DataTypeId.uint8,
-            access="rw",
-            manufacturer_code=PHILIPS_MFG_CODE,
-        )
-
-
 (
-    QuirkBuilder("Philips", "SML001")
-    .applies_to("Philips", "SML002")
+    QuirkBuilder(PHILIPS, "SML001")
+    .applies_to(PHILIPS, "SML002")
     .replaces(PhilipsMotionBasicCluster, endpoint_id=2)
-    .replaces(PhilipsMotionOccupancyCluster, endpoint_id=2)
-    # Endpoint 1 has a client OnOff cluster which creates a dead duplicate motion
-    # entity.
+    .replaces(PhilipsOccupancySensing, endpoint_id=2)
+    # Duplicate motion entity
     .prevent_default_entity_creation(
         endpoint_id=1,
         cluster_id=OnOff.cluster_id,
@@ -67,14 +53,14 @@ class PhilipsMotionOccupancyCluster(CustomCluster, OccupancySensing):
     # entity, but SML002 is a v1 sensor and uses only three sensitivity levels.
     .prevent_default_entity_creation(
         endpoint_id=2,
-        cluster_id=PhilipsMotionOccupancyCluster.cluster_id,
+        cluster_id=OccupancySensing.cluster_id,
         unique_id_suffix="motion_sensitivity",
     )
     .enum(
         attribute_name="sensitivity",
-        enum_class=MotionSensitivity,
-        cluster_id=PhilipsMotionOccupancyCluster.cluster_id,
+        cluster_id=OccupancySensing.cluster_id,
         endpoint_id=2,
+        enum_class=MotionSensitivity,
         translation_key="motion_sensitivity",
         fallback_name="Motion sensitivity",
     )
