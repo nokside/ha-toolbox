@@ -382,6 +382,10 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
 
         return values
 
+    async def _read_heartbeat(self) -> None:
+        """Read the FP300 heartbeat."""
+        await self.read_attributes([self.AttributeDefs.aqara_heartbeat.id])
+
     # async def apply_custom_configuration(self, *args: Any, **kwargs: Any) -> None:
     #     """FP300 authentication handshake simulation."""
     #     auth_code = self.AttributeDefs.auth_code.id
