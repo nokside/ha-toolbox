@@ -1,9 +1,13 @@
 """Quirk for Aqara Presence Multi-Sensor FP300 lumi.sensor_occupy.agl8.
 
 Requires Home Assistant 2026.8.0 or later.
+
+Resetting the device does not clear the Zigbee binding table. During migration between
+Zigbee platforms or coordinators, stale bindings to previous coordinators may remain.
 """
 
 import random
+import time
 
 from collections.abc import Iterator
 from typing import Any, Final, Literal
@@ -73,11 +77,11 @@ class ReportMode(t.enum8):
     Threshold_and_interval = 3
 
 
-class AqaraFP300LifelineCluster(LocalDataCluster):
-    """Values decoded from the Aqara lifeline."""
+class AqaraFP300HeartbeatCluster(LocalDataCluster):
+    """Values decoded from the Aqara heartbeat 0x00F7."""
 
     cluster_id = 0xFC02
-    ep_attribute = "aqara_fp300_lifeline"
+    ep_attribute = "heartbeat"
 
     class AttributeDefs(BaseAttributeDefs):
         """Attribute definitions."""
@@ -89,7 +93,7 @@ class AqaraFP300LifelineCluster(LocalDataCluster):
         )
         battery_voltage: Final = ZCLAttributeDef(
             id=0x0001,
-            type=t.Single,
+            type=t.uint16_t,
             manufacturer_code=None,
         )
 
@@ -248,13 +252,13 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
         ai_spatial_learning: Final = ZCLAttributeDef(
             id=0x0157,
             type=t.uint8_t,
-            access="w",
+            access="wp",
             manufacturer_code=AQARA_MFG_CODE,
         )
         restart_device: Final = ZCLAttributeDef(
             id=0x00E8,
             type=t.Bool,
-            access="w",
+            access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
         target_distance: Final = ZCLAttributeDef(
@@ -266,7 +270,7 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
         track_target_distance: Final = ZCLAttributeDef(
             id=0x0198,
             type=t.uint8_t,
-            access="w",
+            access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
         pir_detection: Final = ZCLAttributeDef(
@@ -288,56 +292,77 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
             access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
-        aqara_lifeline: Final = ZCLAttributeDef(
+        # 0x05 - RebootCount; 0x0A - ParentAddress; 0x0C - Unknown; 0x0D - Firmware version
+        # 0x13 - LowBattery; 0x17 - BatteryVoltage (mV); 0x18 - BatteryLevel; 0x1C - BatteryUseUp
+        # 0x64 - Presence detection state; 0x67 - PIR motion state
+        # 0x65 - BatteryChargingState - 0 = NotCharging, 1 = Charging, 2 = NotChargeable
+        aqara_heartbeat: Final = ZCLAttributeDef(
             id=0x00F7,
             type=t.LVBytes,
             access="rp",
             manufacturer_code=AQARA_MFG_CODE,
         )
-        init_state: Final = ZCLAttributeDef(
+        # 1 - Factory Reset, 2 - Network Reset
+        reset_type: Final = ZCLAttributeDef(
             id=0x00E6,
             type=t.uint8_t,
             access="rp",
             manufacturer_code=AQARA_MFG_CODE,
         )
-        init_token: Final = ZCLAttributeDef(
+        # Used during the authentication handshake with the Aqara hub.
+        # 16-byte random value.
+        # No impact on the device's operation was detected.
+        auth_code: Final = ZCLAttributeDef(
             id=0x00FF,
             type=t.LVBytes,
-            access="w",
+            access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the FP300 manufacturer cluster."""
         super().__init__(*args, **kwargs)
-        self.on_event(
-            AttributeReportedEvent.event_type,
-            self._handle_attribute_event,
-        )
+
+        self._next_heartbeat_read_time = time.monotonic() + 7200
+
+        for event_type in (
+            AttributeReadEvent,
+            AttributeReportedEvent,
+        ):
+            self.on_event(
+                event_type.event_type,
+                self._handle_attribute_event,
+            )
 
     def _handle_attribute_event(
         self,
-        event: AttributeReportedEvent,
+        event: AttributeReadEvent | AttributeReportedEvent,
     ) -> None:
-        """Handle the Aqara lifeline attribute."""
-        if event.attribute_id == self.AttributeDefs.aqara_lifeline.id:
-            values = self._parse_lifeline_report(event.value)
-            lifeline_cluster = self.endpoint.aqara_fp300_lifeline
+        """Handle attribute read and report events."""
+        if event.attribute_id == self.AttributeDefs.aqara_heartbeat.id:
+            self._next_heartbeat_read_time = time.monotonic() + 7200
+            values = self._parse_heartbeat_report(event.value)
 
             if self.BATTERY_PERCENTAGE_TAG in values:
-                lifeline_cluster.update_attribute(
-                    AqaraFP300LifelineCluster.AttributeDefs.battery_percentage.id,
+                self.endpoint.heartbeat.update_attribute(
+                    AqaraFP300HeartbeatCluster.AttributeDefs.battery_percentage.id,
                     values[self.BATTERY_PERCENTAGE_TAG],
                 )
 
             if self.BATTERY_VOLTAGE_TAG in values:
-                lifeline_cluster.update_attribute(
-                    AqaraFP300LifelineCluster.AttributeDefs.battery_voltage.id,
-                    values[self.BATTERY_VOLTAGE_TAG] / 1000,
+                self.endpoint.heartbeat.update_attribute(
+                    AqaraFP300HeartbeatCluster.AttributeDefs.battery_voltage.id,
+                    values[self.BATTERY_VOLTAGE_TAG],
                 )
 
-    def _parse_lifeline_report(self, data: bytes) -> dict[int, Any]:
-        """Parse FP300 lifeline report."""
+        if isinstance(event, AttributeReportedEvent):
+            now = time.monotonic()
+            if now >= self._next_heartbeat_read_time:
+                self._next_heartbeat_read_time = now + 7200
+                self.create_catching_task(self._read_heartbeat())
+
+    def _parse_heartbeat_report(self, data: bytes) -> dict[int, Any]:
+        """Parse FP300 heartbeat."""
         values: dict[int, Any] = {}
 
         while len(data) >= 2:
@@ -347,7 +372,7 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
                 typed_value, data = foundation.TypeValue.deserialize(data[1:])
             except (KeyError, ValueError):
                 self.debug(
-                    "Failed to deserialize FP300 lifeline tag 0x%02X from %r",
+                    "Failed to deserialize FP300 heartbeat tag 0x%02X from %r",
                     tag,
                     data,
                 )
@@ -357,32 +382,25 @@ class AqaraFP300ManufacturerCluster(CustomCluster):
 
         return values
 
-    async def apply_custom_configuration(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        """Apply FP300 custom configuration."""
-        try:
-            success, _ = await self.read_attributes(
-                [self.AttributeDefs.init_state.id],
-            )
-            init_state = success.get(self.AttributeDefs.init_state.id)
+    # async def apply_custom_configuration(self, *args: Any, **kwargs: Any) -> None:
+    #     """FP300 authentication handshake simulation."""
+    #     auth_code = self.AttributeDefs.auth_code.id
 
-            if init_state == 0:
-                await self.write_attributes(
-                    {
-                        self.AttributeDefs.init_token.name: t.LVBytes(
-                            random.randbytes(16)
-                        ),
-                    },
-                )
-        except Exception as exc:
-            self.debug("Failed to initialize init_token: %r", exc)
+    #     success, _ = await self.read_attributes([auth_code])
+
+    #     try:
+    #         value = success[auth_code]
+    #     except KeyError:
+    #         return
+
+    #     if not value:
+    #         await self.write_attributes(
+    #             {auth_code: random.randbytes(16)}
+    #         )
 
 
 class FP300DetectionRangeNumber(BaseNumber):
-    """Detection range number backed directly by detection_range_raw."""
+    """FP300 detection range."""
 
     _attribute_name = (
         AqaraFP300ManufacturerCluster.AttributeDefs.detection_range_raw.name
@@ -424,7 +442,7 @@ class FP300DetectionRangeNumber(BaseNumber):
         self,
         event: AttributeReadEvent | AttributeReportedEvent | AttributeWrittenEvent,
     ) -> None:
-        """Handle detection_range_raw value updates."""
+        """Handle detection range updates."""
         if event.attribute_name == self._attribute_name:
             self.maybe_emit_state_changed_event()
 
@@ -434,7 +452,7 @@ class FP300DetectionRangeNumber(BaseNumber):
         if len(raw) == 5:
             mask = int.from_bytes(raw[2:5], "little")
             return mask.bit_length() * cls._attr_native_step
-    
+
         return None
 
     @classmethod
@@ -457,7 +475,7 @@ class FP300DetectionRangeNumber(BaseNumber):
         return self._decode(bytes(raw))
 
     async def async_set_native_value(self, value: float) -> None:
-        """Write detection range through detection_range_raw."""
+        """Set the detection range."""
         await write_attributes_safe(
             self._cluster,
             {self._attribute_name: self._encode(value)},
@@ -465,7 +483,7 @@ class FP300DetectionRangeNumber(BaseNumber):
         self.maybe_emit_state_changed_event()
 
     async def async_update(self) -> None:
-        """Read detection_range_raw from the device."""
+        """Update the detection range."""
         await safe_read(
             self._cluster,
             [self._attribute_name],
@@ -476,7 +494,7 @@ class FP300DetectionRangeNumber(BaseNumber):
 
 
 class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
-    """LED trigger indicator off time select backed by led_indicator_off_times_raw."""
+    """FP300 LED indicator off time select."""
 
     _attribute_name = (
         AqaraFP300ManufacturerCluster.AttributeDefs.led_indicator_off_times_raw.name
@@ -499,7 +517,7 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
         time_field: Literal["start", "end"],
         **kwargs: Any,
     ) -> None:
-        """Initialize the LED trigger indicator off time select."""
+        """Initialize the select."""
         super().__init__(*args, **kwargs)
         self._time_field = time_field
 
@@ -523,7 +541,7 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
         self,
         event: AttributeReadEvent | AttributeReportedEvent | AttributeWrittenEvent,
     ) -> None:
-        """Handle led_indicator_off_times_raw value updates."""
+        """Handle LED indicator off time updates."""
         if event.attribute_name == self._attribute_name:
             self.maybe_emit_state_changed_event()
 
@@ -545,7 +563,7 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
 
     @staticmethod
     def _decode(raw: int) -> tuple[int, int]:
-        """Decode raw LED trigger indicator off time into start and end hours."""
+        """Decode start and end hours."""
         return raw & 0xFF, (raw >> 16) & 0xFF
 
     @staticmethod
@@ -555,7 +573,7 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
 
     @property
     def current_option(self) -> str | None:
-        """Return this LED trigger indicator off time as a select option."""
+        """Return the current option."""
         raw = self._cluster.get(self._attribute_name)
 
         if raw is None:
@@ -570,7 +588,7 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
         return None
 
     async def async_select_option(self, option: str) -> None:
-        """Write this LED trigger indicator off time through the raw attribute."""
+        """Set the selected option."""
         raw = self._cluster.get(self._attribute_name)
 
         if raw is None:
@@ -592,10 +610,10 @@ class FP300LedIndicatorOffTimeSelect(BaseSelectEntity, PlatformEntity):
 
 
 class AqaraFP300Device(QuirkV2Device):
-    """Aqara FP300 QuirkBuilder device with direct raw-backed entities."""
+    """Aqara FP300 quirk device."""
 
     def discover_entities(self) -> Iterator[BaseEntity]:
-        """Yield QuirkBuilder entities and direct raw-backed FP300 entities."""
+        """Yield FP300 entities."""
         yield from super().discover_entities()
 
         endpoint = self.endpoints[1]
@@ -643,7 +661,7 @@ class AqaraFP300Device(QuirkV2Device):
     .zha_device_class(AqaraFP300Device)
     .replaces(AqaraFP300ManufacturerCluster)
     .removes(PowerConfiguration.cluster_id)
-    .adds(AqaraFP300LifelineCluster)
+    .adds(AqaraFP300HeartbeatCluster)
     .binary_sensor(
         attribute_name="presence",
         cluster_id=AqaraFP300ManufacturerCluster.cluster_id,
@@ -889,7 +907,7 @@ class AqaraFP300Device(QuirkV2Device):
     )
     .sensor(
         attribute_name="battery_percentage",
-        cluster_id=AqaraFP300LifelineCluster.cluster_id,
+        cluster_id=AqaraFP300HeartbeatCluster.cluster_id,
         entity_type=EntityType.DIAGNOSTIC,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
@@ -900,11 +918,12 @@ class AqaraFP300Device(QuirkV2Device):
     )
     .sensor(
         attribute_name="battery_voltage",
-        cluster_id=AqaraFP300LifelineCluster.cluster_id,
+        cluster_id=AqaraFP300HeartbeatCluster.cluster_id,
         entity_type=EntityType.DIAGNOSTIC,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         unit=UnitOfElectricPotential.VOLT,
+        multiplier=0.001,
         initially_disabled=True,
         suggested_display_precision=3,
         translation_key="battery_voltage",
