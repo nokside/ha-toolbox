@@ -1,4 +1,4 @@
-"""Quirk v2 for SONOFF ZBMINIL2."""
+"""Quirk for SONOFF ZBMINIL2."""
 
 from zhaquirks.builder import QuirkBuilder
 from zhaquirks.device import CustomZigpyDevice

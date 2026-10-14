@@ -1,5 +1,9 @@
 """Quirk for Tuya ZG-204ZM."""
 
+from zigpy import types as t
+from zigpy.zcl.clusters.measurement import OccupancySensing
+from zigpy.zcl.clusters.security import IasZone
+
 from zhaquirks.builder import (
     EntityPlatform,
     EntityType,
@@ -9,16 +13,12 @@ from zhaquirks.builder import (
 )
 from zhaquirks.const import BatterySize
 from zhaquirks.tuya.builder import TuyaIlluminance, TuyaQuirkBuilder
-from zhaquirks.tuya.tuya_motion import (
-    TuyaHumanMotionStateV02,
-    TuyaOccupancySensing,
-)
-from zigpy import types as t
-from zigpy.zcl.clusters.measurement import OccupancySensing
-from zigpy.zcl.clusters.security import IasZone
+from zhaquirks.tuya.tuya_motion import TuyaHumanMotionStateV02, TuyaOccupancySensing
 
 
 class TuyaMotionDetectionMode(t.enum8):
+    """Motion detection modes."""
+
     Only_PIR = 0x00
     PIR_and_radar = 0x01
     Only_radar = 0x02
@@ -28,7 +28,11 @@ class ZG204ZMIlluminance(TuyaIlluminance):
     """ZG-204ZM illuminance with corrected scale."""
 
     def _update_attribute(self, attrid, value):
-        if attrid == self.AttributeDefs.measured_value.id:
+        """Correct the reported illuminance value."""
+        if (
+            attrid == self.AttributeDefs.measured_value.id
+            and self.endpoint.device.manufacturer == "_TZE200_kb5noeto"
+        ):
             value = max(0, value - 10000)
 
         super()._update_attribute(attrid, value)
@@ -39,8 +43,7 @@ class ZG204ZMIlluminance(TuyaIlluminance):
     .applies_to("_TZE200_kb5noeto", "TS0601")
     .applies_to("_TZE200_tyffvoij", "TS0601")
     .applies_to("_TZE200_yflzeeqj", "TS0601")
-    .applies_to("HOBEIAN", "ZG-204ZM")
-    .friendly_name(manufacturer="Tuya", model="ZG-204ZM")
+    .friendly_name(manufacturer="HOBEIAN", model="Presence Sensor ZG-204ZM")
     .removes(IasZone.cluster_id)
     .tuya_dp(
         dp_id=1,

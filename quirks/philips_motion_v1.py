@@ -1,4 +1,4 @@
-"""Quirk v2 for Philips Hue SML001/SML002 motion sensors."""
+"""Quirk for Philips Hue SML001/SML002 motion sensors."""
 
 from typing import Final
 
@@ -38,23 +38,21 @@ class PhilipsMotionBasicCluster(CustomCluster, Basic):
         )
 
 
-(
-    QuirkBuilder(PHILIPS, "SML001")
-    .applies_to(PHILIPS, "SML002")
+base_quirk = (
+    QuirkBuilder()
     .replaces(PhilipsMotionBasicCluster, endpoint_id=2)
     .replaces(PhilipsOccupancySensing, endpoint_id=2)
     # Duplicate motion entity
     .prevent_default_entity_creation(
         endpoint_id=1,
         cluster_id=OnOff.cluster_id,
-        cluster_type=ClusterType.Client,
     )
-    # ZHA matches SML002 with the native five-level HueV2MotionSensitivity
-    # entity, but SML002 is a v1 sensor and uses only three sensitivity levels.
-    .prevent_default_entity_creation(
+    .switch(
+        attribute_name="trigger_indicator",
+        cluster_id=Basic.cluster_id,
         endpoint_id=2,
-        cluster_id=OccupancySensing.cluster_id,
-        unique_id_suffix="motion_sensitivity",
+        translation_key="trigger_indicator",
+        fallback_name="LED trigger indicator",
     )
     .enum(
         attribute_name="sensitivity",
@@ -64,5 +62,18 @@ class PhilipsMotionBasicCluster(CustomCluster, Basic):
         translation_key="motion_sensitivity",
         fallback_name="Motion sensitivity",
     )
+)
+
+(
+    base_quirk.clone()
+    .applies_to(PHILIPS, "SML001")
+    .friendly_name(manufacturer="Philips", model="Hue Motion Sensor")
+    .add_to_registry()
+)
+
+(
+    base_quirk.clone()
+    .applies_to(PHILIPS, "SML002")
+    .friendly_name(manufacturer="Philips", model="Hue Outdoor Motion Sensor")
     .add_to_registry()
 )

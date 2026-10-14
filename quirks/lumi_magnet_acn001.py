@@ -1,87 +1,34 @@
-"""Quirk v2 for Aqara Door and Window Sensor E1 lumi.magnet.acn001 / MCCGQ14LM."""
+"""Quirk for Aqara Door and Window Sensor E1 lumi.magnet.acn001 / MCCGQ14LM."""
 
 from typing import Any, Final
 
-from zhaquirks import CustomCluster, LocalDataCluster
-from zhaquirks.builder import (
-    PERCENTAGE,
-    BinarySensorDeviceClass,
-    EntityType,
-    QuirkBuilder,
-    SensorDeviceClass,
-    SensorStateClass,
-    UnitOfElectricPotential,
-)
 from zigpy import types as t
-from zigpy.zcl import (
-    AttributeReportedEvent,
-    ClusterType,
-    foundation,
-)
-from zigpy.zcl.clusters.general import Ota, PowerConfiguration
+from zigpy.zcl import AttributeReportedEvent, foundation
+from zigpy.zcl.clusters.general import PowerConfiguration
 from zigpy.zcl.clusters.security import IasZone
 from zigpy.zcl.foundation import BaseAttributeDefs, ZCLAttributeDef
+
+from zhaquirks import CustomCluster
+from zhaquirks.builder import QuirkBuilder
+from zhaquirks.const import BatterySize
+from zhaquirks.xiaomi import XiaomiPowerConfiguration
 
 AQARA_MFG_CODE: Final = 0x115F
 
 
-class AqaraE1LifelineCluster(LocalDataCluster):
-    """Values decoded from the Aqara lifeline."""
-
-    cluster_id = 0xFC02
-    ep_attribute = "aqara_e1_lifeline"
-
-    MAX_VOLTS_MV: Final = 3000
-    MIN_VOLTS_MV: Final = 2600
-
-    class AttributeDefs(BaseAttributeDefs):
-        battery_percentage: Final = ZCLAttributeDef(
-            id=0x0000,
-            type=t.uint8_t,
-            manufacturer_code=None,
-        )
-        battery_voltage: Final = ZCLAttributeDef(
-            id=0x0001,
-            type=t.Single,
-            manufacturer_code=None,
-        )
-
-    _VALID_ATTRIBUTES: set[int] = {
-        AttributeDefs.battery_percentage.id,
-        AttributeDefs.battery_voltage.id,
-    }
-
-    def update_from_voltage(self, voltage_mv: int) -> None:
-        self.update_attribute(
-            self.AttributeDefs.battery_voltage.id,
-            voltage_mv / 1000,
-        )
-
-        if voltage_mv >= self.MAX_VOLTS_MV:
-            percentage = 100
-        elif voltage_mv < self.MIN_VOLTS_MV:
-            percentage = 0
-        else:
-            percentage = int(0.00045 * voltage_mv**2 - 2.277 * voltage_mv + 2880)
-
-        self.update_attribute(
-            self.AttributeDefs.battery_percentage.id,
-            percentage,
-        )
-
-
-class AqaraE1ManufacturerCluster(CustomCluster):
+class E1MagnetManufacturerCluster(CustomCluster):
     """Aqara Door and Window Sensor E1 manufacturer cluster."""
 
     cluster_id = 0xFCC0
-    ep_attribute = "aqara_e1_manufacturer"
+    ep_attribute = "e1_manufacturer"
 
     BATTERY_VOLTAGE_TAG: Final = 0x01
+    CONTACT_STATE_TAG: Final = 0x64
 
     class AttributeDefs(BaseAttributeDefs):
-        """Attribute definitions."""
+        """E1 manufacturer attributes."""
 
-        aqara_lifeline: Final = ZCLAttributeDef(
+        aqara_heartbeat: Final = ZCLAttributeDef(
             id=0x00F7,
             type=t.LVBytes,
             access="rp",
@@ -89,7 +36,7 @@ class AqaraE1ManufacturerCluster(CustomCluster):
         )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialize the Aqara manufacturer cluster."""
+        """Init."""
         super().__init__(*args, **kwargs)
         self.on_event(
             AttributeReportedEvent.event_type,
@@ -100,16 +47,23 @@ class AqaraE1ManufacturerCluster(CustomCluster):
         self,
         event: AttributeReportedEvent,
     ) -> None:
-        """Handle the Aqara lifeline attribute."""
-        if event.attribute_id == self.AttributeDefs.aqara_lifeline.id:
-            values = self._parse_lifeline_report(event.value)
-            lifeline_cluster = self.endpoint.aqara_e1_lifeline
+        """Handle manufacturer attribute updates."""
+        if event.attribute_id == self.AttributeDefs.aqara_heartbeat.id:
+            values = self._parse_heartbeat_report(event.value)
 
             if self.BATTERY_VOLTAGE_TAG in values:
-                lifeline_cluster.update_from_voltage(values[self.BATTERY_VOLTAGE_TAG])
+                self.endpoint.power.battery_reported(
+                    values[self.BATTERY_VOLTAGE_TAG]
+                )
 
-    def _parse_lifeline_report(self, data: bytes) -> dict[int, Any]:
-        """Parse the Aqara lifeline report."""
+            if self.CONTACT_STATE_TAG in values:
+                self.endpoint.ias_zone.update_attribute(
+                    IasZone.AttributeDefs.zone_status.id,
+                    values[self.CONTACT_STATE_TAG],
+                )
+
+    def _parse_heartbeat_report(self, data: bytes) -> dict[int, Any]:
+        """Parse Aqara E1 heartbeat report."""
         values: dict[int, Any] = {}
 
         while len(data) >= 2:
@@ -117,9 +71,9 @@ class AqaraE1ManufacturerCluster(CustomCluster):
 
             try:
                 typed_value, data = foundation.TypeValue.deserialize(data[1:])
-            except ValueError:
+            except (KeyError, ValueError):
                 self.debug(
-                    "Failed to deserialize Aqara E1 lifeline tag 0x%02X from %r",
+                    "Failed to deserialize Aqara E1 heartbeat tag 0x%02X from %r",
                     tag,
                     data,
                 )
@@ -130,46 +84,39 @@ class AqaraE1ManufacturerCluster(CustomCluster):
         return values
 
 
+class E1MagnetPowerConfiguration(XiaomiPowerConfiguration):
+    """Power configuration for the Aqara Door and Window Sensor E1."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Init."""
+        super().__init__(*args, **kwargs)
+
+        self._CONSTANT_ATTRIBUTES = {
+            PowerConfiguration.AttributeDefs.battery_size.id: BatterySize.CR1632,
+        }
+
+    def _update_battery_percentage(self, voltage_mv: int) -> None:
+        """Update battery percentage from voltage."""
+        # Aqara voltage curve.
+        curve_value = 0.00045 * voltage_mv**2 - 2.277 * voltage_mv + 2880
+
+        # Remap [33, 100] curve range to [20, 100]
+        percentage = 20 + (curve_value - 33) * (100 - 20) / (100 - 33)
+
+        # Clamp between 0 and 100
+        percentage = max(0, min(100, percentage))
+
+        self._update_attribute(
+            self.BATTERY_PERCENTAGE_REMAINING,
+            round(percentage * 2),
+        )
+
+
 (
     QuirkBuilder("LUMI", "lumi.magnet.acn001")
     .friendly_name(manufacturer="Aqara", model="Door and Window Sensor E1")
-    .replaces(AqaraE1ManufacturerCluster)
-    .removes(PowerConfiguration.cluster_id)
-    .adds(AqaraE1LifelineCluster)
-    .removes(
-        Ota.cluster_id,
-        cluster_type=ClusterType.Client,
-    )
-    .sensor(
-        attribute_name="battery_percentage",
-        cluster_id=AqaraE1LifelineCluster.cluster_id,
-        entity_type=EntityType.DIAGNOSTIC,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=PERCENTAGE,
-        suggested_display_precision=0,
-        translation_key="battery",
-        fallback_name="Battery",
-    )
-    .sensor(
-        attribute_name="battery_voltage",
-        cluster_id=AqaraE1LifelineCluster.cluster_id,
-        entity_type=EntityType.DIAGNOSTIC,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfElectricPotential.VOLT,
-        initially_disabled=True,
-        suggested_display_precision=3,
-        translation_key="battery_voltage",
-        fallback_name="Battery voltage",
-    )
-    .binary_sensor(
-        attribute_name=IasZone.AttributeDefs.zone_status.name,
-        cluster_id=IasZone.cluster_id,
-        device_class=BinarySensorDeviceClass.BATTERY,
-        attribute_converter=lambda value: bool(value & IasZone.ZoneStatus.Battery),
-        entity_type=EntityType.DIAGNOSTIC,
-        fallback_name="Battery",
-    )
+    .replaces(E1MagnetManufacturerCluster)
+    .replaces(E1MagnetPowerConfiguration)
+    .skip_configuration()
     .add_to_registry()
 )

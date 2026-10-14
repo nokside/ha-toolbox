@@ -1,51 +1,44 @@
-"""Quirk v2 for Aqara Motion Sensor P1 lumi.motion.ac02 / RTCGQ14LM."""
+"""Quirk for Aqara Motion Sensor P1 lumi.motion.ac02 / RTCGQ14LM."""
 
 import asyncio
 from typing import Any, Final
 
-from zhaquirks import CustomCluster, LocalDataCluster
-from zhaquirks.builder import (
-    PERCENTAGE,
-    EntityType,
-    NumberDeviceClass,
-    QuirkBuilder,
-    SensorDeviceClass,
-    SensorStateClass,
-    UnitOfElectricPotential,
-    UnitOfTime,
-)
 from zigpy import types as t
-from zigpy.zcl import (
-    AttributeReportedEvent,
-    ClusterType,
-    foundation,
-)
+from zigpy.zcl import AttributeReportedEvent, foundation
 from zigpy.zcl.clusters.general import PowerConfiguration
-from zigpy.zcl.clusters.measurement import OccupancySensing
+from zigpy.zcl.clusters.measurement import IlluminanceMeasurement, OccupancySensing
 from zigpy.zcl.foundation import BaseAttributeDefs, DataTypeId, ZCLAttributeDef
+
+from zhaquirks import CustomCluster, LocalDataCluster
+from zhaquirks.builder import NumberDeviceClass, QuirkBuilder, UnitOfTime
+from zhaquirks.const import BatterySize
+from zhaquirks.xiaomi import LocalIlluminanceMeasurementCluster, XiaomiPowerConfiguration
 
 AQARA_MFG_CODE: Final = 0x115F
 
 
 class MotionSensitivity(t.enum8):
-    """Aqara Motion Sensor P1 motion sensitivity."""
+    """Motion sensitivity."""
 
     Low = 0x01
     Medium = 0x02
     High = 0x03
 
 
-class AqaraP1ManufacturerCluster(CustomCluster):
+class P1ManufacturerCluster(CustomCluster):
     """Aqara Motion Sensor P1 manufacturer cluster."""
 
     cluster_id = 0xFCC0
-    ep_attribute = "aqara_p1_manufacturer"
+    ep_attribute = "p1_manufacturer"
 
     BATTERY_VOLTAGE_TAG: Final = 0x01
     ILLUMINANCE_TAG: Final = 0x65
+    DETECTION_INTERVAL_TAG: Final = 0x69
+    MOTION_SENSITIVITY_TAG: Final = 0x6A
+    LED_TRIGGER_INDICATOR_TAG: Final = 0x6B
 
     class AttributeDefs(BaseAttributeDefs):
-        """Aqara P1 manufacturer attributes."""
+        """P1 manufacturer attributes."""
 
         detection_interval: Final = ZCLAttributeDef(
             id=0x0102,
@@ -60,19 +53,19 @@ class AqaraP1ManufacturerCluster(CustomCluster):
             access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
-        trigger_indicator: Final = ZCLAttributeDef(
+        led_trigger_indicator: Final = ZCLAttributeDef(
             id=0x0152,
             type=t.uint8_t,
             access="rwp",
             manufacturer_code=AQARA_MFG_CODE,
         )
-        occupancy_illuminance: Final = ZCLAttributeDef(
+        motion_illuminance: Final = ZCLAttributeDef(
             id=0x0112,
             type=t.uint32_t,
             access="rp",
             manufacturer_code=AQARA_MFG_CODE,
         )
-        aqara_lifeline: Final = ZCLAttributeDef(
+        aqara_heartbeat: Final = ZCLAttributeDef(
             id=0x00F7,
             type=t.LVBytes,
             access="rp",
@@ -80,7 +73,7 @@ class AqaraP1ManufacturerCluster(CustomCluster):
         )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialize manufacturer cluster and subscribe to source updates."""
+        """Init."""
         super().__init__(*args, **kwargs)
         self.on_event(
             AttributeReportedEvent.event_type,
@@ -92,25 +85,47 @@ class AqaraP1ManufacturerCluster(CustomCluster):
         event: AttributeReportedEvent,
     ) -> None:
         """Handle manufacturer attribute updates."""
-        if event.attribute_id == self.AttributeDefs.aqara_lifeline.id:
-            values = self._parse_lifeline_report(event.value)
+        if event.attribute_id == self.AttributeDefs.aqara_heartbeat.id:
+            values = self._parse_heartbeat_report(event.value)
 
             if self.BATTERY_VOLTAGE_TAG in values:
-                self.endpoint.aqara_p1_lifeline.update_from_voltage(
+                self.endpoint.power.battery_reported(
                     values[self.BATTERY_VOLTAGE_TAG]
                 )
 
             if self.ILLUMINANCE_TAG in values:
-                self.endpoint.aqara_p1_illuminance.update_from_lux(
-                    values[self.ILLUMINANCE_TAG]
+                self.endpoint.illuminance.update_attribute(
+                    IlluminanceMeasurement.AttributeDefs.measured_value.id,
+                    values[self.ILLUMINANCE_TAG],
                 )
 
-        if event.attribute_id == self.AttributeDefs.occupancy_illuminance.id:
-            self.endpoint.aqara_p1_illuminance.update_from_lux(event.value & 0xFFFF)
+            if self.DETECTION_INTERVAL_TAG in values:
+                self.update_attribute(
+                    self.AttributeDefs.detection_interval.id,
+                    values[self.DETECTION_INTERVAL_TAG],
+                )
+
+            if self.MOTION_SENSITIVITY_TAG in values:
+                self.update_attribute(
+                    self.AttributeDefs.motion_sensitivity.id,
+                    values[self.MOTION_SENSITIVITY_TAG],
+                )
+
+            if self.LED_TRIGGER_INDICATOR_TAG in values:
+                self.update_attribute(
+                    self.AttributeDefs.led_trigger_indicator.id,
+                    values[self.LED_TRIGGER_INDICATOR_TAG],
+                )
+
+        if event.attribute_id == self.AttributeDefs.motion_illuminance.id:
+            self.endpoint.illuminance.update_attribute(
+                IlluminanceMeasurement.AttributeDefs.measured_value.id,
+                event.value & 0xFFFF,
+            )
             self.endpoint.occupancy.set_occupied()
 
-    def _parse_lifeline_report(self, data: bytes) -> dict[int, Any]:
-        """Parse Aqara P1 lifeline report."""
+    def _parse_heartbeat_report(self, data: bytes) -> dict[int, Any]:
+        """Parse Aqara P1 heartbeat report."""
         values: dict[int, Any] = {}
 
         while len(data) >= 2:
@@ -118,9 +133,9 @@ class AqaraP1ManufacturerCluster(CustomCluster):
 
             try:
                 typed_value, data = foundation.TypeValue.deserialize(data[1:])
-            except ValueError:
+            except (KeyError, ValueError):
                 self.debug(
-                    "Failed to deserialize Aqara P1 lifeline tag 0x%02X from %r",
+                    "Failed to deserialize Aqara P1 heartbeat tag 0x%02X from %r",
                     tag,
                     data,
                 )
@@ -130,59 +145,51 @@ class AqaraP1ManufacturerCluster(CustomCluster):
 
         return values
 
-
-class AqaraP1LifelineCluster(LocalDataCluster):
-    cluster_id = 0xFC02
-    ep_attribute = "aqara_p1_lifeline"
-
-    MAX_VOLTS_MV: Final = 3000
-    MIN_VOLTS_MV: Final = 2600
-
-    class AttributeDefs(BaseAttributeDefs):
-        battery_percentage: Final = ZCLAttributeDef(
-            id=0x0000,
-            type=t.uint8_t,
-            manufacturer_code=None,
-        )
-        battery_voltage: Final = ZCLAttributeDef(
-            id=0x0001,
-            type=t.Single,
-            manufacturer_code=None,
+    async def apply_custom_configuration(self, *args, **kwargs):
+        """Read P1 configuration attributes."""
+        await self.read_attributes(
+            [
+                self.AttributeDefs.detection_interval.id,
+                self.AttributeDefs.motion_sensitivity.id,
+                self.AttributeDefs.led_trigger_indicator.id,
+            ]
         )
 
-    _VALID_ATTRIBUTES: set[int] = {
-        AttributeDefs.battery_percentage.id,
-        AttributeDefs.battery_voltage.id,
-    }
 
-    def update_from_voltage(self, voltage_mv: int) -> None:
-        self.update_attribute(
-            self.AttributeDefs.battery_voltage.id,
-            voltage_mv / 1000,
+class P1PowerConfigurationCluster(XiaomiPowerConfiguration):
+    """Aqara P1 power configuration cluster."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize battery metadata."""
+        super().__init__(*args, **kwargs)
+        self._CONSTANT_ATTRIBUTES = {
+            PowerConfiguration.AttributeDefs.battery_size.id: BatterySize.CR2450,
+            PowerConfiguration.AttributeDefs.battery_quantity.id: 2,
+        }
+
+    def _update_battery_percentage(self, voltage_mv: int) -> None:
+        """Update battery percentage from voltage."""
+        # Aqara voltage curve.
+        curve_value = 0.00045 * voltage_mv**2 - 2.277 * voltage_mv + 2880
+
+        # Remap [33, 100] curve range to [20, 100]
+        percentage = 20 + (curve_value - 33) * (100 - 20) / (100 - 33)
+
+        # Clamp between 0 and 100
+        percentage = max(0, min(100, percentage))
+
+        self._update_attribute(
+            self.BATTERY_PERCENTAGE_REMAINING,
+            round(percentage * 2),
         )
 
-        if voltage_mv >= self.MAX_VOLTS_MV:
-            percentage = 100
-        elif voltage_mv < self.MIN_VOLTS_MV:
-            percentage = 0
-        else:
-            percentage = int(0.00045 * voltage_mv**2 - 2.277 * voltage_mv + 2880)
 
-        self.update_attribute(
-            self.AttributeDefs.battery_percentage.id,
-            percentage,
-        )
-
-class AqaraP1OccupancyCluster(LocalDataCluster, OccupancySensing):
+class P1OccupancySensingCluster(LocalDataCluster, OccupancySensing):
     """Local occupancy cluster for Aqara Motion Sensor P1."""
-
-    DETECTION_INTERVAL_SECONDS: Final = 30
 
     OCCUPANCY_ATTR_ID: Final = OccupancySensing.AttributeDefs.occupancy.id
 
-    _VALID_ATTRIBUTES: set[int] = {
-        OCCUPANCY_ATTR_ID,
-    }
+    _VALID_ATTRIBUTES: set[int] = {OCCUPANCY_ATTR_ID}
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize local occupancy timer."""
@@ -202,12 +209,10 @@ class AqaraP1OccupancyCluster(LocalDataCluster, OccupancySensing):
         if self._occupancy_timer_handle is not None:
             self._occupancy_timer_handle.cancel()
 
-        detection_interval = self.endpoint.aqara_p1_manufacturer.get(
-            AqaraP1ManufacturerCluster.AttributeDefs.detection_interval.id,
+        detection_interval = self.endpoint.p1_manufacturer.get(
+            P1ManufacturerCluster.AttributeDefs.detection_interval.id,
+            30,
         )
-
-        if detection_interval is None:
-            detection_interval = self.DETECTION_INTERVAL_SECONDS
 
         self._occupancy_timer_handle = asyncio.get_running_loop().call_later(
             detection_interval,
@@ -223,87 +228,32 @@ class AqaraP1OccupancyCluster(LocalDataCluster, OccupancySensing):
         )
 
 
-class AqaraP1IlluminanceCluster(LocalDataCluster):
-    """Local illuminance values reported by Aqara Motion Sensor P1."""
+class P1IlluminanceMeasurementCluster(LocalIlluminanceMeasurementCluster):
+    """Local illuminance measurement cluster for Aqara Motion Sensor P1."""
 
-    cluster_id = 0xFC03
-    ep_attribute = "aqara_p1_illuminance"
-
-    class AttributeDefs(BaseAttributeDefs):
-        """Attribute definitions."""
-
-        illuminance: Final = ZCLAttributeDef(
-            id=0x0000,
-            type=t.uint16_t,
-            manufacturer_code=None,
-        )
-
-    _VALID_ATTRIBUTES: set[int] = {
-        AttributeDefs.illuminance.id,
-    }
-
-    def update_from_lux(self, value: int) -> None:
-        """Update illuminance in lux."""
-        if value < 0 or value > 0xFDE8:
+    def _update_attribute(self, attrid, value):
+        if attrid == self.AttributeDefs.measured_value.id and (
+            value < 0 or value > 0xFDE8
+        ):
             self.debug(
                 "Received invalid illuminance value: %s - setting illuminance to 0",
                 value,
             )
             value = 0
 
-        self.update_attribute(
-            self.AttributeDefs.illuminance.id,
-            value,
-        )
+        super()._update_attribute(attrid, value)
 
 
 (
     QuirkBuilder("LUMI", "lumi.motion.ac02")
     .friendly_name(manufacturer="Aqara", model="Motion Sensor P1")
-    .adds(AqaraP1OccupancyCluster, endpoint_id=1)
-    .adds(AqaraP1IlluminanceCluster, endpoint_id=1)
-    .adds(AqaraP1LifelineCluster, endpoint_id=1)
-    .replaces(AqaraP1ManufacturerCluster, endpoint_id=1)
-    .removes(PowerConfiguration.cluster_id)
-    .removes(
-        AqaraP1ManufacturerCluster.cluster_id,
-        cluster_type=ClusterType.Client,
-    )
-    .sensor(
-        attribute_name="illuminance",
-        cluster_id=AqaraP1IlluminanceCluster.cluster_id,
-        device_class=SensorDeviceClass.ILLUMINANCE,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit="lx",
-        translation_key="illuminance",
-        fallback_name="Illuminance",
-    )
-    .sensor(
-        attribute_name="battery_percentage",
-        cluster_id=AqaraP1LifelineCluster.cluster_id,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=PERCENTAGE,
-        entity_type=EntityType.DIAGNOSTIC,
-        suggested_display_precision=0,
-        translation_key="battery",
-        fallback_name="Battery",
-    )
-    .sensor(
-        attribute_name="battery_voltage",
-        cluster_id=AqaraP1LifelineCluster.cluster_id,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfElectricPotential.VOLT,
-        entity_type=EntityType.DIAGNOSTIC,
-        initially_disabled=True,
-        suggested_display_precision=3,
-        translation_key="battery_voltage",
-        fallback_name="Battery voltage",
-    )
+    .adds(P1OccupancySensingCluster, endpoint_id=1)
+    .adds(P1IlluminanceMeasurementCluster, endpoint_id=1)
+    .replaces(P1PowerConfigurationCluster, endpoint_id=1)
+    .replaces(P1ManufacturerCluster, endpoint_id=1)
     .number(
         attribute_name="detection_interval",
-        cluster_id=AqaraP1ManufacturerCluster.cluster_id,
+        cluster_id=P1ManufacturerCluster.cluster_id,
         device_class=NumberDeviceClass.DURATION,
         min_value=2,
         max_value=200,
@@ -315,15 +265,16 @@ class AqaraP1IlluminanceCluster(LocalDataCluster):
     .enum(
         attribute_name="motion_sensitivity",
         enum_class=MotionSensitivity,
-        cluster_id=AqaraP1ManufacturerCluster.cluster_id,
+        cluster_id=P1ManufacturerCluster.cluster_id,
         translation_key="motion_sensitivity",
         fallback_name="Motion sensitivity",
     )
     .switch(
-        attribute_name="trigger_indicator",
-        cluster_id=AqaraP1ManufacturerCluster.cluster_id,
-        translation_key="trigger_indicator",
+        attribute_name="led_trigger_indicator",
+        cluster_id=P1ManufacturerCluster.cluster_id,
+        translation_key="led_trigger_indicator",
         fallback_name="LED trigger indicator",
     )
+    .skip_configuration()
     .add_to_registry()
 )
