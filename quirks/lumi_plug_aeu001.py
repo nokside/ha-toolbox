@@ -271,6 +271,10 @@ class H2EUOutletHeartbeatCluster(LocalDataCluster):
     .replaces(H2EUOutletManufacturerCluster)
     .adds(H2EUOutletHeartbeatCluster)
     .adds(H2EUOutletChargingLimitCluster)
+    .prevent_default_entity_creation(
+        endpoint_id=2,
+        cluster_id=OnOff.cluster_id,
+    )
     .switch(
         attribute_name="button_lock",
         cluster_id=H2EUOutletManufacturerCluster.cluster_id,
